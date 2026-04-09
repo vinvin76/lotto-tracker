@@ -559,12 +559,46 @@ async function recordStripeEvent(event, userId = null) {
   }
 }
 
+async function activatePendingAsProUser(customerId) {
+  const pending = await getQuery(`SELECT * FROM pending_registrations WHERE stripe_customer_id = ?`, [customerId]);
+  if (!pending) {
+    return null;
+  }
+
+  const existingUser = await getQuery(`SELECT * FROM users WHERE email = ?`, [pending.email]);
+  if (existingUser) {
+    await runQuery(`DELETE FROM pending_registrations WHERE id = ?`, [pending.id]);
+    return existingUser;
+  }
+
+  const now = new Date().toISOString();
+  const result = await runQuery(
+    `INSERT INTO users (name, email, password_hash, email_verified, plan, stripe_customer_id, created_at, updated_at) VALUES (?, ?, ?, 0, 'PRO', ?, ?, ?)`,
+    [pending.name, pending.email, pending.password_hash, customerId, now, now]
+  );
+
+  const newUser = await getQuery(`SELECT * FROM users WHERE id = ?`, [result.lastID]);
+  await runQuery(`DELETE FROM pending_registrations WHERE id = ?`, [pending.id]);
+
+  try {
+    await issueVerificationForUser(newUser);
+  } catch (emailError) {
+    console.error("Email verification send error (non-blocking):", emailError.message);
+  }
+
+  return newUser;
+}
+
 async function syncStripeSubscription(subscription, fallbackUserId = null) {
   const customerId = String(subscription.customer || "");
   let user = customerId ? await findUserByStripeCustomerId(customerId) : null;
 
   if (!user && fallbackUserId) {
     user = await getQuery(`SELECT * FROM users WHERE id = ?`, [fallbackUserId]);
+  }
+
+  if (!user && customerId) {
+    user = await activatePendingAsProUser(customerId);
   }
 
   if (!user) {
@@ -806,19 +840,30 @@ app.post("/api/auth/resend-verification", async (req, res) => {
     }
 
       const pending = await getQuery(`SELECT * FROM pending_registrations WHERE email = ?`, [email]);
-      if (!pending) {
+      if (pending) {
+        const verification = await issueVerificationForPending(pending);
+        res.json({
+          ok: true,
+          message: canSendEmail() ? "Un nouveau courriel de verification a ete envoye." : "Email non configure localement, utilise le lien de verification fourni.",
+          emailPreviewMode: !canSendEmail(),
+          verifyUrl: !canSendEmail() ? verification.verifyUrl : null
+        });
+        return;
+      }
+
+      // Verifier si l'utilisateur existe mais n'a pas encore confirme son courriel (Pro active par webhook)
+      const unverifiedUser = await getQuery(`SELECT * FROM users WHERE email = ? AND email_verified = 0`, [email]);
+      if (!unverifiedUser) {
         res.status(404).json({ ok: false, message: "Aucune inscription en attente trouvee avec ce courriel." });
         return;
       }
-      const verification = await issueVerificationForPending(pending);
+      const verification = await issueVerificationForUser(unverifiedUser);
       res.json({
         ok: true,
-        message: canSendEmail()
-          ? "Un nouveau courriel de verification a ete envoye."
-        : "Email non configure localement, utilise le lien de verification fourni.",
-      emailPreviewMode: !canSendEmail(),
-      verifyUrl: !canSendEmail() ? verification.verifyUrl : null
-    });
+        message: canSendEmail() ? "Un nouveau courriel de verification a ete envoye." : "Email non configure localement, utilise le lien de verification fourni.",
+        emailPreviewMode: !canSendEmail(),
+        verifyUrl: !canSendEmail() ? verification.verifyUrl : null
+      });
   } catch (error) {
     console.error("Resend verification error:", error);
     if (error.code === "RESEND_TEST_RECIPIENT_RESTRICTED") {
@@ -838,34 +883,57 @@ app.post("/api/auth/verify-email", async (req, res) => {
     }
 
       const pending = await getQuery(`SELECT * FROM pending_registrations WHERE token = ?`, [token]);
-      if (!pending) {
+
+      if (pending) {
+        if (new Date(pending.expires_at).getTime() < Date.now()) {
+          res.status(400).json({ ok: false, message: "Ce lien de verification a expire." });
+          return;
+        }
+
+        const existingUser = await getQuery(`SELECT * FROM users WHERE email = ?`, [pending.email]);
+        if (existingUser) {
+          await runQuery(`DELETE FROM pending_registrations WHERE id = ?`, [pending.id]);
+          res.status(400).json({ ok: false, message: "Ce compte a deja ete active. Connecte-toi directement." });
+          return;
+        }
+
+        const now = new Date().toISOString();
+        const result = await runQuery(
+          `INSERT INTO users (name, email, password_hash, email_verified, plan, stripe_customer_id, created_at, updated_at) VALUES (?, ?, ?, 1, 'FREE', ?, ?, ?)`,
+          [pending.name, pending.email, pending.password_hash, pending.stripe_customer_id, now, now]
+        );
+
+        await runQuery(`DELETE FROM pending_registrations WHERE id = ?`, [pending.id]);
+
+        const verifiedUser = await getQuery(`SELECT * FROM users WHERE id = ?`, [result.lastID]);
+        verifiedUser.plan = await ensureUserPlanCache(verifiedUser.id);
+        res.json({
+          ok: true,
+          message: "Ton courriel a bien ete confirme et ton compte est maintenant actif.",
+          user: sanitizeUser(verifiedUser)
+        });
+        return;
+      }
+
+      // Token absent de pending_registrations — verifier email_verification_tokens (utilisateurs Pro actives par le webhook)
+      const tokenRow = await getQuery(
+        `SELECT * FROM email_verification_tokens WHERE token = ? AND used_at IS NULL`,
+        [token]
+      );
+      if (!tokenRow) {
         res.status(400).json({ ok: false, message: "Ce lien de verification est invalide ou deja utilise." });
         return;
       }
-      if (new Date(pending.expires_at).getTime() < Date.now()) {
+      if (new Date(tokenRow.expires_at).getTime() < Date.now()) {
         res.status(400).json({ ok: false, message: "Ce lien de verification a expire." });
         return;
       }
 
-      const existingUser = await getQuery(`SELECT * FROM users WHERE email = ?`, [pending.email]);
-      if (existingUser) {
-        await runQuery(`DELETE FROM pending_registrations WHERE id = ?`, [pending.id]);
-        res.status(400).json({ ok: false, message: "Ce compte a deja ete active. Connecte-toi directement." });
-        return;
-      }
-
       const now = new Date().toISOString();
-      const result = await runQuery(
-        `
-          INSERT INTO users (name, email, password_hash, email_verified, plan, stripe_customer_id, created_at, updated_at)
-          VALUES (?, ?, ?, 1, 'FREE', ?, ?, ?)
-        `,
-        [pending.name, pending.email, pending.password_hash, pending.stripe_customer_id, now, now]
-      );
+      await runQuery(`UPDATE email_verification_tokens SET used_at = ? WHERE id = ?`, [now, tokenRow.id]);
+      await runQuery(`UPDATE users SET email_verified = 1, updated_at = ? WHERE id = ?`, [now, tokenRow.user_id]);
 
-      await runQuery(`DELETE FROM pending_registrations WHERE id = ?`, [pending.id]);
-
-      const verifiedUser = await getQuery(`SELECT * FROM users WHERE id = ?`, [result.lastID]);
+      const verifiedUser = await getQuery(`SELECT * FROM users WHERE id = ?`, [tokenRow.user_id]);
       verifiedUser.plan = await ensureUserPlanCache(verifiedUser.id);
       res.json({
         ok: true,
