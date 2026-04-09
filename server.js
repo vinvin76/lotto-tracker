@@ -349,6 +349,25 @@ async function sendVerificationEmail({ email, name, verifyUrl }) {
 
   if (!response.ok) {
     const text = await response.text();
+    let parsed = null;
+
+    try {
+      parsed = JSON.parse(text);
+    } catch (error) {
+      parsed = null;
+    }
+
+    if (
+      response.status === 403 &&
+      parsed?.name === "validation_error"
+    ) {
+      const resendError = new Error(
+        "En mode test actuel, la confirmation par courriel fonctionne seulement avec l'adresse personnelle autorisee sur Resend. Les adresses d'entreprise ou d'autres destinataires seront refusees tant que le domaine n'est pas verifie."
+      );
+      resendError.code = "RESEND_TEST_RECIPIENT_RESTRICTED";
+      throw resendError;
+    }
+
     throw new Error(`Resend error: ${response.status} ${text}`);
   }
 
@@ -685,6 +704,10 @@ app.post("/api/auth/register", async (req, res) => {
     });
   } catch (error) {
     console.error("Register error:", error);
+    if (error.code === "RESEND_TEST_RECIPIENT_RESTRICTED") {
+      res.status(400).json({ ok: false, code: error.code, message: error.message });
+      return;
+    }
     res.status(500).json({ ok: false, message: "Erreur serveur pendant la creation du compte." });
   }
 });
@@ -751,6 +774,10 @@ app.post("/api/auth/resend-verification", async (req, res) => {
     });
   } catch (error) {
     console.error("Resend verification error:", error);
+    if (error.code === "RESEND_TEST_RECIPIENT_RESTRICTED") {
+      res.status(400).json({ ok: false, code: error.code, message: error.message });
+      return;
+    }
     res.status(500).json({ ok: false, message: "Erreur serveur pendant l'envoi du courriel de verification." });
   }
 });
