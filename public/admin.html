@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="fr-CA">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LottoTracker Admin</title>
+  <meta name="robots" content="noindex, nofollow">
+  <style>
+    :root{--bg:#09111f;--panel:rgba(15,23,42,.92);--border:rgba(148,163,184,.16);--text:#f8fafc;--muted:#94a3b8;--green:#22c55e;--blue:#38bdf8;--red:#ef4444;--amber:#f59e0b;--shadow:0 18px 40px rgba(2,6,23,.38);--r:18px}
+    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+    body{margin:0;color:var(--text);font-family:"Trebuchet MS",Arial,sans-serif;background:radial-gradient(circle at top left,rgba(56,189,248,.1),transparent 26%),linear-gradient(180deg,#08101d 0%,#09111f 100%);min-height:100vh}
+    button,input,textarea,select{font:inherit} .hidden{display:none!important}
+    .shell{max-width:1100px;margin:0 auto;padding:24px 16px 48px}
+    .card{border:1px solid var(--border);border-radius:var(--r);background:var(--panel);box-shadow:var(--shadow);backdrop-filter:blur(12px);padding:22px}
+    .btn{border:none;cursor:pointer;color:#fff;font-weight:700;transition:.15s ease;min-height:42px;padding:10px 16px;border-radius:12px}
+    .btn:hover{transform:translateY(-1px);opacity:.97}
+    .primary{background:linear-gradient(135deg,var(--green),#16a34a)} .secondary{background:linear-gradient(135deg,var(--blue),#0284c7)} .danger{background:linear-gradient(135deg,var(--red),#b91c1c)} .warning{background:linear-gradient(135deg,var(--amber),#d97706)} .muted-btn{background:rgba(255,255,255,.08);border:1px solid rgba(148,163,184,.18)}
+    .field{display:grid;gap:6px;margin-bottom:12px} .field label{color:#cbd5e1;font-size:13px;font-weight:700}
+    .field input,.field select,.field textarea{width:100%;border-radius:12px;border:1px solid rgba(148,163,184,.18);background:rgba(9,17,31,.82);color:var(--text);padding:11px 14px;outline:none}
+    .field input:focus,.field select:focus{border-color:rgba(56,189,248,.6);box-shadow:0 0 0 3px rgba(56,189,248,.12)}
+    .message{padding:12px 16px;border-radius:12px;margin-bottom:14px;font-size:14px}
+    .success{color:#bbf7d0;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.2)}
+    .error{color:#fecaca;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.2)}
+    .info{color:#bfdbfe;background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.18)}
+    .topbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:24px}
+    .tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:22px}
+    .tab{padding:9px 18px;border-radius:12px;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.05);color:var(--muted);cursor:pointer;font-weight:700;font-size:14px;transition:.15s}
+    .tab:hover{background:rgba(255,255,255,.1);color:var(--text)} .tab.active{background:rgba(56,189,248,.15);border-color:rgba(56,189,248,.4);color:var(--blue)}
+    .label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em}
+    .badge{display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700}
+    .badge-pro{background:rgba(34,197,94,.15);color:#bbf7d0;border:1px solid rgba(34,197,94,.25)}
+    .badge-free{background:rgba(255,255,255,.07);color:var(--muted);border:1px solid rgba(148,163,184,.18)}
+    .badge-gift{background:rgba(245,158,11,.15);color:#fde68a;border:1px solid rgba(245,158,11,.25)}
+    .table-wrap{overflow-x:auto;border-radius:14px;border:1px solid var(--border)}
+    table{width:100%;border-collapse:collapse;font-size:14px}
+    th{padding:11px 14px;text-align:left;color:var(--muted);font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;background:rgba(255,255,255,.03);border-bottom:1px solid var(--border)}
+    td{padding:11px 14px;border-bottom:1px solid rgba(148,163,184,.08);vertical-align:middle}
+    tr:last-child td{border-bottom:none} tr:hover td{background:rgba(255,255,255,.025)}
+    .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .mini{border:none;cursor:pointer;color:#fff;font-weight:700;min-height:32px;padding:6px 12px;border-radius:9px;font-size:12px;transition:.15s;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.08)}
+    .mini:hover{transform:translateY(-1px)}
+    .mini.green{background:rgba(34,197,94,.18);border-color:rgba(34,197,94,.35);color:#bbf7d0}
+    .mini.red{background:rgba(239,68,68,.18);border-color:rgba(239,68,68,.3);color:#fecaca}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+    .muted{color:var(--muted);font-size:13px;line-height:1.55}
+    .stat-row{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:22px}
+    .stat-box{background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:14px;padding:16px}
+    .stat-box .val{font-size:28px;font-weight:800;margin-top:6px}
+    input[type=checkbox]{width:16px;height:16px;cursor:pointer;accent-color:var(--blue)}
+    @media(max-width:700px){.grid2{grid-template-columns:1fr}.stat-row{grid-template-columns:1fr 1fr}}
+  </style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- LOGIN -->
+  <div id="loginView" style="max-width:420px;margin:80px auto 0">
+    <div style="text-align:center;margin-bottom:28px">
+      <div style="font-size:28px;font-weight:800;font-family:'Segoe UI',Arial,sans-serif">LottoTracker</div>
+      <div class="muted" style="margin-top:6px">Panneau d'administration</div>
+    </div>
+    <div class="card">
+      <div id="loginMsg"></div>
+      <div class="field"><label for="adminPassword">Mot de passe admin</label><input id="adminPassword" type="password" placeholder="Mot de passe" autocomplete="current-password"></div>
+      <div class="field hidden" id="mfaField"><label for="adminMfa">Code MFA (6 chiffres)</label><input id="adminMfa" type="text" placeholder="123456" maxlength="6" autocomplete="one-time-code" inputmode="numeric"></div>
+      <button class="btn secondary" id="loginBtn" style="width:100%">Se connecter</button>
+    </div>
+  </div>
+
+  <!-- ADMIN APP -->
+  <div id="adminApp" class="hidden">
+    <div class="topbar">
+      <div>
+        <div style="font-size:22px;font-weight:800;font-family:'Segoe UI',Arial,sans-serif">Admin LottoTracker</div>
+        <div class="muted" id="adminSubtitle">Panneau de gestion</div>
+      </div>
+      <button class="btn danger" id="logoutBtn">Déconnexion</button>
+    </div>
+
+    <div class="stat-row">
+      <div class="stat-box"><div class="label">Total utilisateurs</div><div class="val" id="statTotal">—</div></div>
+      <div class="stat-box"><div class="label">Abonnés Pro</div><div class="val" id="statPro" style="color:#86efac">—</div></div>
+      <div class="stat-box"><div class="label">Plan gratuit</div><div class="val" id="statFree" style="color:#94a3b8">—</div></div>
+    </div>
+
+    <div id="appMsg"></div>
+
+    <div class="tabs">
+      <div class="tab active" id="tabUsers" onclick="showTab('users')">Utilisateurs</div>
+      <div class="tab" id="tabPromos" onclick="showTab('promos')">Codes promo</div>
+      <div class="tab" id="tabEmail" onclick="showTab('email')">Envoi courriel</div>
+    </div>
+
+    <!-- ONGLET UTILISATEURS -->
+    <div id="panelUsers">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+          <strong>Tous les utilisateurs</strong>
+          <div class="actions">
+            <input type="text" id="searchInput" placeholder="Rechercher nom / courriel…" style="border-radius:10px;border:1px solid rgba(148,163,184,.2);background:rgba(9,17,31,.8);color:var(--text);padding:8px 12px;font-size:13px;min-width:220px">
+            <button class="mini" onclick="loadUsers()">Actualiser</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th><input type="checkbox" id="checkAll" title="Tout sélectionner"></th><th>Nom</th><th>Courriel</th><th>Plan</th><th>Abonnement</th><th>Inscrit le</th><th>Actions</th></tr></thead>
+            <tbody id="usersBody"><tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px">Chargement…</td></tr></tbody>
+          </table>
+        </div>
+        <div style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <span class="muted" id="selectionCount">0 sélectionné(s)</span>
+          <button class="mini green" onclick="bulkGrantPro()">Donner Pro aux sélectionnés</button>
+          <button class="mini red" onclick="bulkRevokePro()">Retirer Pro aux sélectionnés</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ONGLET PROMO -->
+    <div id="panelPromos" class="hidden">
+      <div class="grid2">
+        <div class="card">
+          <strong style="display:block;margin-bottom:16px">Créer un code promo Stripe</strong>
+          <div id="promoMsg"></div>
+          <div class="field">
+            <label>Code (optionnel, ex: LOTTO20)</label>
+            <input id="promoCode" type="text" placeholder="LOTTO20" style="text-transform:uppercase">
+          </div>
+          <div class="field">
+            <label>Réduction</label>
+            <select id="promoType">
+              <option value="percent">% de réduction</option>
+              <option value="amount">Montant fixe (CAD)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label id="promoValueLabel">Pourcentage (ex: 50 = 50%)</label>
+            <input id="promoValue" type="number" min="1" placeholder="50">
+          </div>
+          <div class="field">
+            <label>Durée</label>
+            <select id="promoDuration">
+              <option value="once">Une fois</option>
+              <option value="repeating">Plusieurs mois</option>
+              <option value="forever">Pour toujours</option>
+            </select>
+          </div>
+          <div class="field hidden" id="durationMonthsField">
+            <label>Nombre de mois</label>
+            <input id="promoDurationMonths" type="number" min="1" value="3">
+          </div>
+          <div class="field">
+            <label>Utilisations max (laisser vide = illimité)</label>
+            <input id="promoMax" type="number" min="1" placeholder="Illimité">
+          </div>
+          <button class="btn secondary" onclick="createPromo()">Créer le code promo</button>
+        </div>
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+            <strong>Codes promo existants</strong>
+            <button class="mini" onclick="loadPromos()">Actualiser</button>
+          </div>
+          <div id="promosList"><div class="muted">Chargement…</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ONGLET EMAIL -->
+    <div id="panelEmail" class="hidden">
+      <div class="card">
+        <strong style="display:block;margin-bottom:16px">Envoyer un courriel promotionnel</strong>
+        <div id="emailMsg"></div>
+        <div class="muted" style="margin-bottom:16px">Sélectionne les utilisateurs dans l'onglet Utilisateurs, ou utilise les filtres ci-dessous. Variables disponibles : <code style="background:rgba(255,255,255,.08);padding:2px 6px;border-radius:5px">{nom}</code> <code style="background:rgba(255,255,255,.08);padding:2px 6px;border-radius:5px">{email}</code></div>
+        <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+          <button class="mini" onclick="selectAllForEmail()">Sélectionner tous les utilisateurs</button>
+          <button class="mini" onclick="selectFreeForEmail()">Sélectionner les gratuits seulement</button>
+          <button class="mini" onclick="selectProForEmail()">Sélectionner les Pro seulement</button>
+        </div>
+        <div class="muted" id="emailTargetCount" style="margin-bottom:14px">0 destinataire(s) sélectionné(s)</div>
+        <div class="field"><label>Sujet</label><input id="emailSubject" type="text" placeholder="Découvrez les nouvelles fonctions Pro !"></div>
+        <div class="field">
+          <label>Corps du courriel (HTML accepté)</label>
+          <textarea id="emailBody" style="min-height:160px;border-radius:12px;border:1px solid rgba(148,163,184,.18);background:rgba(9,17,31,.82);color:var(--text);padding:12px 14px;width:100%;outline:none;resize:vertical" placeholder="Bonjour {nom},&#10;&#10;Nous avons le plaisir de vous offrir..."></textarea>
+        </div>
+        <button class="btn secondary" onclick="sendEmail()">Envoyer le courriel</button>
+      </div>
+    </div>
+
+  </div><!-- /adminApp -->
+</div><!-- /shell -->
+
+<script>
+  const $=id=>document.getElementById(id);
+  let adminToken=sessionStorage.getItem("adminToken")||"";
+  let allUsers=[];
+  let selectedIds=new Set();
+
+  async function api(url,options={}){
+    const headers={...(options.headers||{}),"Content-Type":"application/json"};
+    if(adminToken)headers.Authorization="Bearer "+adminToken;
+    const r=await fetch(url,{...options,headers,body:options.body?JSON.stringify(options.body):undefined});
+    let data=null;try{data=await r.json();}catch(e){}
+    return{r,data};
+  }
+
+  function msg(elId,text,type){const el=$(elId);if(!text){el.innerHTML="";return;}el.innerHTML=`<div class="message ${type}">${text}</div>`;}
+
+  async function login(){
+    msg("loginMsg","","");
+    const password=$("adminPassword").value;
+    const mfaToken=$("adminMfa").value;
+    const{r,data}=await api("/api/admin/login",{method:"POST",body:{password,mfaToken:mfaToken||undefined}});
+    if(!r.ok||!data?.ok){
+      if(data?.code==="MFA_REQUIRED"){$("mfaField").classList.remove("hidden");$("adminMfa").focus();msg("loginMsg","Entre ton code MFA.","info");return;}
+      msg("loginMsg",data?.message||"Erreur de connexion.","error");return;
+    }
+    adminToken=data.token;
+    sessionStorage.setItem("adminToken",adminToken);
+    $("loginView").classList.add("hidden");
+    $("adminApp").classList.remove("hidden");
+    await loadUsers();
+  }
+
+  function logout(){adminToken="";sessionStorage.removeItem("adminToken");location.reload();}
+
+  function showTab(tab){
+    ["users","promos","email"].forEach(t=>{
+      $("panel"+t.charAt(0).toUpperCase()+t.slice(1)).classList.toggle("hidden",t!==tab);
+      $("tab"+t.charAt(0).toUpperCase()+t.slice(1)).classList.toggle("active",t===tab);
+    });
+    if(tab==="promos")loadPromos();
+    if(tab==="email")updateEmailTargetCount();
+  }
+
+  function fmtDate(s){if(!s)return"—";return new Date(s).toLocaleDateString("fr-CA");}
+
+  function planBadge(user){
+    if(user.plan==="PRO"&&user.plan_gifted)return`<span class="badge badge-gift">PRO Cadeau</span>`;
+    if(user.plan==="PRO")return`<span class="badge badge-pro">PRO</span>`;
+    return`<span class="badge badge-free">Gratuit</span>`;
+  }
+
+  function subInfo(user){
+    if(!user.sub_status)return`<span class="muted">—</span>`;
+    const cycle=user.billing_cycle==="YEARLY"?"annuel":"mensuel";
+    const end=user.current_period_end?` · ${fmtDate(user.current_period_end)}`:"";
+    return`<span style="font-size:13px">${user.sub_status} · ${cycle}${end}</span>`;
+  }
+
+  function renderUsers(users){
+    const body=$("usersBody");
+    if(!users.length){body.innerHTML=`<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px">Aucun utilisateur.</td></tr>`;return;}
+    body.innerHTML=users.map(u=>`
+      <tr>
+        <td><input type="checkbox" class="userCheck" data-id="${u.id}" ${selectedIds.has(u.id)?"checked":""}></td>
+        <td><strong>${esc(u.name)}</strong>${u.email_verified?"":`<div style="color:var(--amber);font-size:11px">courriel non confirmé</div>`}</td>
+        <td style="color:var(--muted);font-size:13px">${esc(u.email)}</td>
+        <td>${planBadge(u)}</td>
+        <td>${subInfo(u)}</td>
+        <td style="color:var(--muted);font-size:13px">${fmtDate(u.created_at)}</td>
+        <td>
+          <div class="actions">
+            ${u.plan!=="PRO"?`<button class="mini green" onclick="setPlan(${u.id},'PRO')">Donner Pro</button>`:`<button class="mini red" onclick="setPlan(${u.id},'FREE')">Retirer Pro</button>`}
+          </div>
+        </td>
+      </tr>`).join("");
+    document.querySelectorAll(".userCheck").forEach(cb=>{
+      cb.addEventListener("change",()=>{
+        const id=Number(cb.dataset.id);
+        cb.checked?selectedIds.add(id):selectedIds.delete(id);
+        updateSelectionCount();
+      });
+    });
+  }
+
+  function updateSelectionCount(){
+    $("selectionCount").textContent=`${selectedIds.size} sélectionné(s)`;
+    updateEmailTargetCount();
+  }
+
+  function updateStats(users){
+    $("statTotal").textContent=users.length;
+    $("statPro").textContent=users.filter(u=>u.plan==="PRO").length;
+    $("statFree").textContent=users.filter(u=>u.plan!=="PRO").length;
+  }
+
+  async function loadUsers(){
+    const{r,data}=await api("/api/admin/users");
+    if(!r.ok||!data?.ok){msg("appMsg",data?.message||"Erreur chargement.","error");return;}
+    allUsers=data.users||[];
+    updateStats(allUsers);
+    applySearch();
+  }
+
+  function applySearch(){
+    const q=$("searchInput").value.toLowerCase().trim();
+    const filtered=q?allUsers.filter(u=>u.name.toLowerCase().includes(q)||u.email.toLowerCase().includes(q)):allUsers;
+    renderUsers(filtered);
+  }
+
+  async function setPlan(userId,plan){
+    const{r,data}=await api(`/api/admin/users/${userId}/set-plan`,{method:"POST",body:{plan}});
+    if(!r.ok||!data?.ok){msg("appMsg",data?.message||"Erreur.","error");return;}
+    msg("appMsg",data.message,"success");
+    await loadUsers();
+    setTimeout(()=>msg("appMsg","",""),3000);
+  }
+
+  async function bulkGrantPro(){
+    if(!selectedIds.size){msg("appMsg","Aucun utilisateur sélectionné.","info");return;}
+    for(const id of selectedIds)await api(`/api/admin/users/${id}/set-plan`,{method:"POST",body:{plan:"PRO"}});
+    msg("appMsg",`Pro accordé à ${selectedIds.size} utilisateur(s).`,"success");
+    selectedIds.clear();updateSelectionCount();
+    await loadUsers();setTimeout(()=>msg("appMsg","",""),4000);
+  }
+
+  async function bulkRevokePro(){
+    if(!selectedIds.size){msg("appMsg","Aucun utilisateur sélectionné.","info");return;}
+    for(const id of selectedIds)await api(`/api/admin/users/${id}/set-plan`,{method:"POST",body:{plan:"FREE"}});
+    msg("appMsg",`Pro retiré à ${selectedIds.size} utilisateur(s).`,"success");
+    selectedIds.clear();updateSelectionCount();
+    await loadUsers();setTimeout(()=>msg("appMsg","",""),4000);
+  }
+
+  $("checkAll").addEventListener("change",()=>{
+    const checked=$("checkAll").checked;
+    document.querySelectorAll(".userCheck").forEach(cb=>{
+      cb.checked=checked;
+      const id=Number(cb.dataset.id);
+      checked?selectedIds.add(id):selectedIds.delete(id);
+    });
+    updateSelectionCount();
+  });
+
+  $("searchInput").addEventListener("input",applySearch);
+
+  // Promo codes
+  async function loadPromos(){
+    $("promosList").innerHTML=`<div class="muted">Chargement…</div>`;
+    const{r,data}=await api("/api/admin/promos");
+    if(!r.ok||!data?.ok){$("promosList").innerHTML=`<div class="muted error">Erreur chargement.</div>`;return;}
+    if(!data.promos.length){$("promosList").innerHTML=`<div class="muted">Aucun code promo.</div>`;return;}
+    $("promosList").innerHTML=data.promos.map(p=>`
+      <div style="border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <strong style="font-size:15px;letter-spacing:.04em">${esc(p.code)}</strong>
+          <span class="badge ${p.active?"badge-pro":"badge-free"}">${p.active?"Actif":"Inactif"}</span>
+        </div>
+        <div class="muted" style="margin-top:5px">
+          ${p.coupon.percentOff?`${p.coupon.percentOff}% de réduction`:p.coupon.amountOff?`${p.coupon.amountOff.toFixed(2)} $ de réduction`:""}
+          · ${p.coupon.duration==="once"?"une fois":p.coupon.duration==="forever"?"permanent":"répété"}
+          · Utilisé ${p.timesRedeemed}x${p.maxRedemptions?` / ${p.maxRedemptions}`:""}
+        </div>
+      </div>`).join("");
+  }
+
+  async function createPromo(){
+    msg("promoMsg","","");
+    const type=$("promoType").value;
+    const value=Number($("promoValue").value);
+    const duration=$("promoDuration").value;
+    const body={
+      duration,
+      code:$("promoCode").value.trim()||undefined,
+      maxRedemptions:$("promoMax").value?Number($("promoMax").value):undefined,
+      durationMonths:duration==="repeating"?Number($("promoDurationMonths").value):undefined
+    };
+    if(type==="percent")body.percentOff=value;else body.amountOff=value;
+    if(!value||value<=0){msg("promoMsg","Entre une valeur de réduction valide.","error");return;}
+    const{r,data}=await api("/api/admin/promo/create",{method:"POST",body});
+    if(!r.ok||!data?.ok){msg("promoMsg",data?.message||"Erreur.","error");return;}
+    msg("promoMsg",`Code créé : ${data.promo.code}`,"success");
+    $("promoCode").value="";$("promoValue").value="";$("promoMax").value="";
+    await loadPromos();
+  }
+
+  $("promoDuration").addEventListener("change",()=>{
+    $("durationMonthsField").classList.toggle("hidden",$("promoDuration").value!=="repeating");
+  });
+  $("promoType").addEventListener("change",()=>{
+    $("promoValueLabel").textContent=$("promoType").value==="percent"?"Pourcentage (ex: 50 = 50%)":"Montant en CAD (ex: 2.00)";
+  });
+
+  // Email
+  function selectAllForEmail(){selectedIds=new Set(allUsers.map(u=>u.id));syncCheckboxes();updateSelectionCount();}
+  function selectFreeForEmail(){selectedIds=new Set(allUsers.filter(u=>u.plan!=="PRO").map(u=>u.id));syncCheckboxes();updateSelectionCount();}
+  function selectProForEmail(){selectedIds=new Set(allUsers.filter(u=>u.plan==="PRO").map(u=>u.id));syncCheckboxes();updateSelectionCount();}
+
+  function syncCheckboxes(){
+    document.querySelectorAll(".userCheck").forEach(cb=>{
+      cb.checked=selectedIds.has(Number(cb.dataset.id));
+    });
+  }
+
+  function updateEmailTargetCount(){
+    $("emailTargetCount").textContent=`${selectedIds.size} destinataire(s) sélectionné(s)`;
+  }
+
+  async function sendEmail(){
+    msg("emailMsg","","");
+    const subject=$("emailSubject").value.trim();
+    const body=$("emailBody").value.trim();
+    if(!selectedIds.size){msg("emailMsg","Sélectionne au moins un destinataire.","error");return;}
+    if(!subject||!body){msg("emailMsg","Sujet et corps requis.","error");return;}
+    const{r,data}=await api("/api/admin/email/send",{method:"POST",body:{userIds:[...selectedIds],subject,body}});
+    if(!r.ok||!data?.ok){msg("emailMsg",data?.message||"Erreur.","error");return;}
+    msg("emailMsg",data.message,"success");
+  }
+
+  function esc(v){return String(v??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+
+  $("loginBtn").addEventListener("click",login);
+  $("adminPassword").addEventListener("keydown",e=>{if(e.key==="Enter"){$("adminMfa").classList.contains("hidden")?login():$("adminMfa").focus();}});
+  $("adminMfa").addEventListener("keydown",e=>{if(e.key==="Enter")login();});
+  $("logoutBtn").addEventListener("click",logout);
+
+  // Auto-login si token en session
+  if(adminToken){
+    $("loginView").classList.add("hidden");
+    $("adminApp").classList.remove("hidden");
+    loadUsers();
+  }
+</script>
+</body>
+</html>

@@ -20,6 +20,8 @@ const STRIPE_PRICE_YEARLY = process.env.STRIPE_PRICE_YEARLY || "";
 const STRIPE_CUSTOMER_PORTAL_RETURN_URL = process.env.STRIPE_CUSTOMER_PORTAL_RETURN_URL || `${APP_BASE_URL}/?view=billing`;
 const STRIPE_CHECKOUT_SUCCESS_URL = process.env.STRIPE_CHECKOUT_SUCCESS_URL || `${APP_BASE_URL}/?billing=success`;
 const STRIPE_CHECKOUT_CANCEL_URL = process.env.STRIPE_CHECKOUT_CANCEL_URL || `${APP_BASE_URL}/?billing=cancel`;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
+const ADMIN_MFA_SECRET = process.env.ADMIN_MFA_SECRET || "";
 const DB_DIR = path.join(__dirname, "data");
 const DB_PATH = path.join(DB_DIR, "lotto_tracker.sqlite");
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -118,6 +120,7 @@ async function initDatabase() {
   await addColumnIfMissing("users", "email_verified", "INTEGER NOT NULL DEFAULT 0");
   await addColumnIfMissing("users", "plan", "TEXT NOT NULL DEFAULT 'FREE'");
   await addColumnIfMissing("users", "stripe_customer_id", "TEXT DEFAULT NULL");
+  await addColumnIfMissing("users", "plan_gifted", "INTEGER DEFAULT 0");
 
   await runQuery(`
     CREATE TABLE IF NOT EXISTS tickets (
@@ -480,10 +483,10 @@ function serializeSubscription(row) {
 }
 
 async function getEffectivePlan(userId) {
+  const user = await getQuery(`SELECT plan_gifted FROM users WHERE id = ?`, [userId]);
+  if (user && user.plan_gifted) return "PRO";
   const subscription = await getLatestSubscriptionForUser(userId);
-  if (subscription && activePlanFromStatus(subscription.status) === "PRO") {
-    return "PRO";
-  }
+  if (subscription && activePlanFromStatus(subscription.status) === "PRO") return "PRO";
   return "FREE";
 }
 
@@ -630,6 +633,56 @@ async function syncStripeSubscription(subscription, fallbackUserId = null) {
 
   await ensureUserPlanCache(user.id);
   return user;
+}
+
+// TOTP (RFC 6238) sans dépendance externe
+function base32Decode(str) {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  str = str.toUpperCase().replace(/[^A-Z2-7]/g, "");
+  let bits = 0, value = 0;
+  const output = [];
+  for (const char of str) {
+    const idx = chars.indexOf(char);
+    if (idx === -1) continue;
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) { output.push((value >>> (bits - 8)) & 255); bits -= 8; }
+  }
+  return Buffer.from(output);
+}
+
+function verifyTOTP(secret, token) {
+  const timeStep = Math.floor(Date.now() / 1000 / 30);
+  for (const delta of [-1, 0, 1]) {
+    const key = base32Decode(secret);
+    const step = timeStep + delta;
+    const buf = Buffer.alloc(8);
+    buf.writeUInt32BE(Math.floor(step / 0x100000000), 0);
+    buf.writeUInt32BE(step >>> 0, 4);
+    const hmac = crypto.createHmac("sha1", key);
+    hmac.update(buf);
+    const digest = hmac.digest();
+    const offset = digest[19] & 0xf;
+    const code = ((digest[offset] & 0x7f) << 24) | ((digest[offset + 1] & 0xff) << 16) | ((digest[offset + 2] & 0xff) << 8) | (digest[offset + 3] & 0xff);
+    if (String(code % 1000000).padStart(6, "0") === String(token).trim()) return true;
+  }
+  return false;
+}
+
+function signAdminToken() {
+  return jwt.sign({ role: "admin" }, JWT_SECRET + ":admin", { expiresIn: "8h" });
+}
+
+async function adminAuthMiddleware(req, res, next) {
+  try {
+    const auth = req.headers.authorization || "";
+    const [scheme, token] = auth.split(" ");
+    if (scheme !== "Bearer" || !token) { res.status(401).json({ ok: false, message: "Admin non autorisé." }); return; }
+    jwt.verify(token, JWT_SECRET + ":admin");
+    next();
+  } catch (error) {
+    res.status(401).json({ ok: false, message: "Session admin invalide ou expirée." });
+  }
 }
 
 async function authMiddleware(req, res, next) {
@@ -1262,6 +1315,140 @@ app.get("*", (req, res) => {
     return;
   }
   res.status(200).send("<h1>LottoTracker Unified</h1><p>Le backend fonctionne, mais public/index.html est introuvable.</p>");
+});
+
+// ─── Routes Admin ────────────────────────────────────────────────────────────
+
+app.get("/admin", (req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, "admin.html"));
+});
+
+app.post("/api/admin/login", async (req, res) => {
+  try {
+    if (!ADMIN_PASSWORD) {
+      res.status(503).json({ ok: false, message: "Page admin non configurée. Définir ADMIN_PASSWORD dans les variables d'environnement." });
+      return;
+    }
+    const { password, mfaToken } = req.body;
+    if (!password || password !== ADMIN_PASSWORD) {
+      res.status(401).json({ ok: false, message: "Mot de passe incorrect." });
+      return;
+    }
+    if (ADMIN_MFA_SECRET) {
+      if (!mfaToken) {
+        res.status(401).json({ ok: false, code: "MFA_REQUIRED", message: "Code MFA requis." });
+        return;
+      }
+      if (!verifyTOTP(ADMIN_MFA_SECRET, String(mfaToken))) {
+        res.status(401).json({ ok: false, message: "Code MFA invalide ou expiré." });
+        return;
+      }
+    }
+    res.json({ ok: true, token: signAdminToken(), mfaEnabled: Boolean(ADMIN_MFA_SECRET) });
+  } catch (error) {
+    console.error("Admin login error:", error);
+    res.status(500).json({ ok: false, message: "Erreur serveur." });
+  }
+});
+
+app.get("/api/admin/users", adminAuthMiddleware, async (req, res) => {
+  try {
+    const users = await allQuery(`
+      SELECT u.id, u.name, u.email, u.plan, u.plan_gifted, u.email_verified, u.stripe_customer_id, u.created_at,
+             s.status AS sub_status, s.billing_cycle, s.current_period_end
+      FROM users u
+      LEFT JOIN subscriptions s ON s.id = (SELECT MAX(id) FROM subscriptions WHERE user_id = u.id)
+      ORDER BY u.created_at DESC
+    `);
+    res.json({ ok: true, users });
+  } catch (error) {
+    console.error("Admin users error:", error);
+    res.status(500).json({ ok: false, message: "Erreur serveur." });
+  }
+});
+
+app.post("/api/admin/users/:id/set-plan", adminAuthMiddleware, async (req, res) => {
+  try {
+    const userId = Number(req.params.id);
+    const { plan } = req.body;
+    if (!["PRO", "FREE"].includes(plan)) {
+      res.status(400).json({ ok: false, message: "Plan invalide." });
+      return;
+    }
+    const gifted = plan === "PRO" ? 1 : 0;
+    await runQuery(`UPDATE users SET plan = ?, plan_gifted = ?, updated_at = ? WHERE id = ?`, [plan, gifted, new Date().toISOString(), userId]);
+    res.json({ ok: true, message: `Plan mis à jour : ${plan}` });
+  } catch (error) {
+    console.error("Admin set-plan error:", error);
+    res.status(500).json({ ok: false, message: "Erreur serveur." });
+  }
+});
+
+app.get("/api/admin/promos", adminAuthMiddleware, async (req, res) => {
+  try {
+    if (!stripeConfigured()) { res.json({ ok: true, promos: [] }); return; }
+    const stripe = getStripeClient();
+    const list = await stripe.promotionCodes.list({ limit: 50, expand: ["data.coupon"] });
+    const promos = list.data.map(p => ({
+      id: p.id, code: p.code, active: p.active,
+      timesRedeemed: p.times_redeemed, maxRedemptions: p.max_redemptions,
+      coupon: { percentOff: p.coupon.percent_off, amountOff: p.coupon.amount_off ? p.coupon.amount_off / 100 : null, duration: p.coupon.duration }
+    }));
+    res.json({ ok: true, promos });
+  } catch (error) {
+    console.error("Admin promos list error:", error);
+    res.status(500).json({ ok: false, message: error.message || "Erreur serveur." });
+  }
+});
+
+app.post("/api/admin/promo/create", adminAuthMiddleware, async (req, res) => {
+  try {
+    if (!stripeConfigured()) { res.status(503).json({ ok: false, message: "Stripe non configuré." }); return; }
+    const stripe = getStripeClient();
+    const { percentOff, amountOff, duration, durationMonths, code, maxRedemptions } = req.body;
+    const couponData = { duration: duration || "once" };
+    if (percentOff) couponData.percent_off = Number(percentOff);
+    else if (amountOff) { couponData.amount_off = Math.round(Number(amountOff) * 100); couponData.currency = "cad"; }
+    else { res.status(400).json({ ok: false, message: "percent_off ou amount_off requis." }); return; }
+    if (duration === "repeating") couponData.duration_in_months = Number(durationMonths || 3);
+    const coupon = await stripe.coupons.create(couponData);
+    const promoData = { coupon: coupon.id };
+    if (code) promoData.code = String(code).toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (maxRedemptions) promoData.max_redemptions = Number(maxRedemptions);
+    const promo = await stripe.promotionCodes.create(promoData);
+    res.json({ ok: true, promo: { id: promo.id, code: promo.code } });
+  } catch (error) {
+    console.error("Admin promo create error:", error);
+    res.status(500).json({ ok: false, message: error.message || "Erreur serveur." });
+  }
+});
+
+app.post("/api/admin/email/send", adminAuthMiddleware, async (req, res) => {
+  try {
+    if (!canSendEmail()) { res.status(503).json({ ok: false, message: "Resend non configuré." }); return; }
+    const { userIds, subject, body } = req.body;
+    if (!Array.isArray(userIds) || !userIds.length || !subject || !body) {
+      res.status(400).json({ ok: false, message: "userIds, subject et body requis." }); return;
+    }
+    const placeholders = userIds.map(() => "?").join(",");
+    const users = await allQuery(`SELECT id, name, email FROM users WHERE id IN (${placeholders})`, userIds);
+    let sent = 0, failed = 0;
+    for (const user of users) {
+      try {
+        const html = String(body).replace(/\{nom\}/gi, user.name).replace(/\{email\}/gi, user.email);
+        const r = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ from: RESEND_FROM_EMAIL, to: user.email, subject, html })
+        });
+        if (r.ok) sent++; else failed++;
+      } catch (e) { failed++; }
+    }
+    res.json({ ok: true, message: `Envoyé : ${sent} · Échec : ${failed}` });
+  } catch (error) {
+    console.error("Admin email send error:", error);
+    res.status(500).json({ ok: false, message: "Erreur serveur." });
+  }
 });
 
 initDatabase()
