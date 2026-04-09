@@ -605,6 +605,8 @@ app.post("/api/auth/register", async (req, res) => {
     const name = String(req.body.name || "").trim();
     const email = normalizeEmail(req.body.email);
     const password = String(req.body.password || "");
+    const selectedPlan = String(req.body.selectedPlan || "FREE").trim().toUpperCase() === "PRO" ? "PRO" : "FREE";
+    const billingCycle = String(req.body.billingCycle || "MONTHLY").trim().toUpperCase() === "YEARLY" ? "YEARLY" : "MONTHLY";
 
     if (name.length < 2) {
       res.status(400).json({ ok: false, message: "Le nom doit contenir au moins 2 caracteres." });
@@ -638,11 +640,44 @@ app.post("/api/auth/register", async (req, res) => {
     const user = await getQuery(`SELECT * FROM users WHERE id = ?`, [result.lastID]);
     const verification = await issueVerificationForUser(user);
 
+    let checkoutUrl = null;
+
+    if (selectedPlan === "PRO" && stripeCheckoutConfigured()) {
+      const stripe = getStripeClient();
+      const customer = await stripe.customers.create({
+        email: user.email,
+        name: user.name,
+        metadata: { userId: String(user.id) }
+      });
+
+      await runQuery(
+        `UPDATE users SET stripe_customer_id = ?, updated_at = ? WHERE id = ?`,
+        [customer.id, new Date().toISOString(), user.id]
+      );
+
+      const priceId = billingCycle === "YEARLY" ? STRIPE_PRICE_YEARLY : STRIPE_PRICE_MONTHLY;
+      const session = await stripe.checkout.sessions.create({
+        mode: "subscription",
+        customer: customer.id,
+        line_items: [{ price: priceId, quantity: 1 }],
+        success_url: STRIPE_CHECKOUT_SUCCESS_URL,
+        cancel_url: STRIPE_CHECKOUT_CANCEL_URL,
+        billing_address_collection: "auto",
+        allow_promotion_codes: false,
+        metadata: { userId: String(user.id) }
+      });
+
+      checkoutUrl = session.url || null;
+    }
+
     res.status(201).json({
       ok: true,
       message: canSendEmail()
         ? "Compte cree. Verifie maintenant ton courriel."
         : "Compte cree. Email non configure localement, utilise le lien de verification fourni.",
+      selectedPlan,
+      billingCycle: selectedPlan === "PRO" ? billingCycle : null,
+      checkoutUrl,
       emailVerificationRequired: true,
       emailPreviewMode: !canSendEmail(),
       verifyUrl: !canSendEmail() ? verification.verifyUrl : null,
