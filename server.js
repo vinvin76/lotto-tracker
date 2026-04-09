@@ -432,12 +432,16 @@ async function createOrReplacePendingRegistration({ name, email, passwordHash, s
 
 async function issueVerificationForPending(pending) {
   const verifyUrl = buildVerificationUrl(pending.token);
-  const emailResult = await sendVerificationEmail({
-    email: pending.email,
-    name: pending.name,
-    verifyUrl
-  });
-
+  let emailResult = { sent: false };
+  try {
+    emailResult = await sendVerificationEmail({
+      email: pending.email,
+      name: pending.name,
+      verifyUrl
+    });
+  } catch (emailError) {
+    console.error("Email verification send error (non-blocking):", emailError.message);
+  }
   return { verifyUrl, emailResult };
 }
 
