@@ -381,9 +381,9 @@ async function sendVerificationEmail({ email, name, verifyUrl }) {
       parsed?.name === "validation_error"
     ) {
       const resendError = new Error(
-        "En mode test actuel, la confirmation par courriel fonctionne seulement avec l'adresse personnelle autorisee sur Resend. Les adresses d'entreprise ou d'autres destinataires seront refusees tant que le domaine n'est pas verifie."
+        "L'envoi du courriel de confirmation a echoue. Verifie que ton adresse est valide et reessaie."
       );
-      resendError.code = "RESEND_TEST_RECIPIENT_RESTRICTED";
+      resendError.code = "RESEND_SEND_FAILED";
       throw resendError;
     }
 
