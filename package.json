@@ -1,0 +1,25 @@
+{
+  "name": "lotto-tracker-saas",
+  "version": "1.0.0",
+  "description": "LottoTracker SaaS V4 - application web avec comptes utilisateurs, tickets et dashboard",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "lottery",
+    "saas",
+    "express",
+    "sqlite",
+    "dashboard"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "sqlite3": "^5.1.7"
+  }
+}

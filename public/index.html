@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="fr-CA">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>LottoTracker</title>
+  <meta name="theme-color" content="#0f172a">
+  <meta name="description" content="Suivi de tickets de loterie, depenses, gains et statistiques.">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/svg+xml" href="/icons/icon-192.svg">
+  <link rel="apple-touch-icon" href="/icons/icon-192.svg">
+  <style>
+    :root{--bg:#09111f;--panel:rgba(15,23,42,.88);--border:rgba(148,163,184,.16);--text:#f8fafc;--muted:#94a3b8;--green:#22c55e;--blue:#38bdf8;--red:#ef4444;--amber:#f59e0b;--shadow:0 18px 40px rgba(2,6,23,.38);--r:20px}
+    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent} html{scroll-behavior:smooth}
+    body{margin:0;color:var(--text);font-family:"Trebuchet MS",Arial,sans-serif;background:radial-gradient(circle at top left,rgba(56,189,248,.14),transparent 26%),radial-gradient(circle at top right,rgba(34,197,94,.16),transparent 22%),linear-gradient(180deg,#08101d 0%,#09111f 100%)}
+    button,input,textarea,select{font:inherit} .hidden{display:none!important}
+    .shell{max-width:1320px;margin:0 auto;padding:20px 16px 42px}.card,.hero,.message,.install{border:1px solid var(--border);border-radius:var(--r);background:var(--panel);box-shadow:var(--shadow);backdrop-filter:blur(12px)}
+    .hero{display:grid;grid-template-columns:1.3fr .9fr;gap:18px;padding:24px;margin-bottom:18px}.hero h1{margin:0;font:800 clamp(30px,4vw,46px)/1 "Segoe UI",Arial,sans-serif}.hero p{margin:14px 0 0;color:#dbe7f5;line-height:1.65}
+    .pills{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}.pill,.badge{display:inline-flex;align-items:center;padding:8px 12px;border-radius:999px;font-size:12px;font-weight:700;border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.05)}
+    .topbar{display:flex;justify-content:space-between;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:18px}.actions,.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+    .btn,.mini{border:none;cursor:pointer;color:#fff;font-weight:700;transition:.15s ease}.btn:hover,.mini:hover{transform:translateY(-1px);opacity:.97}.btn{min-height:44px;padding:12px 16px;border-radius:14px}.mini{min-height:36px;padding:8px 12px;border-radius:12px;font-size:12px;background:rgba(255,255,255,.08);border:1px solid rgba(148,163,184,.18)}
+    .primary{background:linear-gradient(135deg,var(--green),#16a34a)} .secondary{background:linear-gradient(135deg,var(--blue),#0284c7)} .danger{background:linear-gradient(135deg,var(--red),#b91c1c)} .mutedBtn{background:rgba(255,255,255,.08);border:1px solid rgba(148,163,184,.18)}
+    .install,.message,.status{padding:14px 16px;margin-bottom:16px}.message.success{color:#bbf7d0;background:rgba(34,197,94,.12)}.message.error{color:#fecaca;background:rgba(239,68,68,.12)}.message.info{color:#bfdbfe;background:rgba(56,189,248,.1)}
+    .auth,.stats,.main,.bottom{display:grid;gap:18px}.auth{grid-template-columns:repeat(2,minmax(0,1fr));margin-bottom:18px}.stats{grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:18px}.main{grid-template-columns:380px minmax(0,1fr)}.bottom{grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr);margin-top:18px}
+    .card{padding:18px}.label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em}.value{font-size:clamp(24px,3vw,34px);font-weight:800;letter-spacing:-.03em;margin-top:8px}.pos{color:#86efac}.neg{color:#fca5a5}
+    .field{display:grid;gap:7px;margin-bottom:12px}.field label{color:#cbd5e1;font-size:13px;font-weight:700}.field input,.field select,.field textarea{width:100%;border-radius:14px;border:1px solid rgba(148,163,184,.18);background:rgba(9,17,31,.82);color:var(--text);padding:12px 14px;outline:none}.field textarea{min-height:92px;resize:vertical}
+    .field input:focus,.field select:focus,.field textarea:focus{border-color:rgba(56,189,248,.6);box-shadow:0 0 0 3px rgba(56,189,248,.14)} .help,.muted{color:var(--muted);font-size:13px;line-height:1.55}
+    .status{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;background:rgba(255,255,255,.04);border:1px solid rgba(148,163,184,.14);border-radius:16px;color:var(--muted)}
+    .dot{width:10px;height:10px;border-radius:999px;background:#64748b;display:inline-block;margin-right:8px}.online{background:var(--green);box-shadow:0 0 12px rgba(34,197,94,.6)}.offline{background:var(--amber);box-shadow:0 0 12px rgba(245,158,11,.5)}
+    .chart{height:320px;border-radius:18px;border:1px solid rgba(148,163,184,.14);background:rgba(6,12,24,.52);padding:14px} canvas{width:100%;height:100%;display:block}
+    .list,.miniList{display:grid;gap:12px}.ticket,.item{border-radius:18px;border:1px solid rgba(148,163,184,.14);background:rgba(5,10,20,.44);padding:14px}.ticketTop,.item{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap}
+    .title{font-size:16px;font-weight:800}.date{color:var(--muted);font-size:12px}.tag{display:inline-flex;align-items:center;padding:7px 10px;border-radius:999px;font-size:12px;font-weight:700}.win{background:rgba(34,197,94,.15);color:#bbf7d0}.loss{background:rgba(239,68,68,.14);color:#fecaca}.even{background:rgba(245,158,11,.14);color:#fde68a}
+    .balls{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}.ball{min-width:38px;height:38px;display:inline-flex;align-items:center;justify-content:center;padding:0 12px;border-radius:999px;background:linear-gradient(135deg,#2563eb,#06b6d4);font-weight:800;box-shadow:0 8px 18px rgba(37,99,235,.25)}
+    .metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.metric{border-radius:14px;padding:10px;background:rgba(255,255,255,.04);border:1px solid rgba(148,163,184,.12)}.metric .label{font-size:11px}.metric .value{font-size:15px;margin-top:6px}
+    .notes{margin-top:12px;color:var(--muted);line-height:1.55;font-size:13px;word-break:break-word}.empty{text-align:center;color:var(--muted);padding:24px 10px;line-height:1.6}.footer{margin-top:28px;color:var(--muted);text-align:center;font-size:12px;line-height:1.6}
+    @media (max-width:1080px){.hero,.main,.bottom{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    @media (max-width:760px){.shell{padding:12px 12px 36px}.auth,.stats,.metrics{grid-template-columns:1fr}.hero,.card{padding:16px}.btn{width:100%}}
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <div>
+        <h1>Une seule version de LottoTracker, moderne et vraiment utilisable.</h1>
+        <p>Cette edition fusionne le meilleur des versions precedentes: backend reel, interface responsive, export JSON, statistiques et mode installable.</p>
+        <div class="pills">
+          <span class="pill">Authentification reelle</span>
+          <span class="pill">Dashboard en direct</span>
+          <span class="pill">Responsive mobile</span>
+          <span class="pill">PWA installable</span>
+        </div>
+      </div>
+      <div>
+        <h2 style="margin:0">Version publique</h2>
+        <p class="muted">Le front n'affiche que des fonctions supportees par l'API pour eviter les boutons qui cassent.</p>
+        <div class="status">
+          <div><span class="dot" id="serverDot"></span><span id="serverText">Verification du serveur...</span></div>
+          <div id="networkText">Reseau : verification...</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="install hidden" id="installBanner">
+      <div><strong>Installer LottoTracker</strong><div class="muted">Ajoute l'application a ton ecran d'accueil pour un acces plus rapide.</div></div>
+      <button class="btn primary" id="installBtnBanner" type="button">Installer</button>
+    </div>
+
+    <div id="verifyMessage"></div>
+    <div id="authView">
+      <div id="authMessage"></div>
+      <section class="auth">
+        <article class="card">
+          <h2 style="margin-top:0">Connexion</h2>
+          <p class="muted">Retrouve tes tickets depuis n'importe quel appareil.</p>
+          <div class="field"><label for="loginEmail">Courriel</label><input id="loginEmail" type="email" placeholder="exemple@email.com"></div>
+          <div class="field"><label for="loginPassword">Mot de passe</label><input id="loginPassword" type="password" placeholder="Ton mot de passe"></div>
+          <button class="btn primary" id="loginBtn" type="button">Se connecter</button>
+          <button class="btn mutedBtn" id="resendVerificationBtn" type="button">Renvoyer le courriel de confirmation</button>
+        </article>
+        <article class="card">
+          <h2 style="margin-top:0">Creer un compte</h2>
+          <p class="muted">Commence a enregistrer tes tickets en quelques secondes.</p>
+          <div class="field"><label for="registerName">Nom</label><input id="registerName" type="text" placeholder="Ton nom"></div>
+          <div class="field"><label for="registerEmail">Courriel</label><input id="registerEmail" type="email" placeholder="exemple@email.com"></div>
+          <div class="field"><label for="registerPassword">Mot de passe</label><input id="registerPassword" type="password" placeholder="Minimum 6 caracteres"></div>
+          <button class="btn secondary" id="registerBtn" type="button">Creer le compte</button>
+        </article>
+      </section>
+    </div>
+
+    <div id="appView" class="hidden">
+      <div class="topbar">
+        <div><strong style="display:block;font-size:22px;font-family:'Segoe UI',Arial,sans-serif">LottoTracker</strong><span class="muted" id="welcomeText">Bienvenue</span></div>
+        <div class="actions">
+          <button class="btn secondary" id="refreshBtn" type="button">Actualiser</button>
+          <button class="btn mutedBtn" id="exportBtn" type="button">Exporter JSON</button>
+          <button class="btn danger" id="logoutBtn" type="button">Deconnexion</button>
+        </div>
+      </div>
+      <div id="appMessage"></div>
+      <section class="stats">
+        <article class="card"><div class="label">Total tickets</div><div class="value" id="totalTickets">0</div></article>
+        <article class="card"><div class="label">Montant joue</div><div class="value" id="totalSpent">0 $</div></article>
+        <article class="card"><div class="label">Montant gagne</div><div class="value pos" id="totalWon">0 $</div></article>
+        <article class="card"><div class="label">Resultat net</div><div class="value" id="netResult">0 $</div></article>
+      </section>
+      <section class="main">
+        <article class="card">
+          <h2 id="formTitle" style="margin-top:0">Ajouter un ticket</h2>
+          <p class="muted">Les numeros sont tries et de-dupliques automatiquement.</p>
+          <div class="field"><label for="ticketGame">Jeu</label><select id="ticketGame"><option>Lotto Max</option><option>6/49</option><option>Banco</option><option>Quebec Max</option><option>Autre</option></select></div>
+          <div class="field"><label for="ticketDate">Date du tirage</label><input id="ticketDate" type="date"></div>
+          <div class="field"><label for="ticketNumbers">Numeros joues</label><input id="ticketNumbers" type="text" placeholder="Ex: 3, 8, 14, 22, 37, 45, 49"></div>
+          <div class="field"><label for="ticketCost">Cout du ticket</label><input id="ticketCost" type="number" min="0" step="0.01" placeholder="Ex: 5.00"></div>
+          <div class="field"><label for="ticketWinnings">Gain</label><input id="ticketWinnings" type="number" min="0" step="0.01" value="0"></div>
+          <div class="field"><label for="ticketNotes">Notes</label><textarea id="ticketNotes" placeholder="Ex: billet en groupe, choix rapide, combinaison favorite..."></textarea></div>
+          <input id="editingTicketId" type="hidden">
+          <div class="row">
+            <button class="btn primary" id="saveTicketBtn" type="button">Enregistrer</button>
+            <button class="btn secondary" id="generateBtn" type="button">Generer des numeros</button>
+            <button class="btn mutedBtn hidden" id="cancelEditBtn" type="button">Annuler</button>
+          </div>
+        </article>
+        <article class="card">
+          <div class="topbar" style="margin-bottom:14px"><div><h2 style="margin:0">Mes tickets</h2><div class="muted" id="ticketCountText">0 ticket</div></div></div>
+          <div class="list" id="ticketList"><div class="empty">Aucun ticket enregistre pour le moment.</div></div>
+        </article>
+      </section>
+      <section class="bottom">
+        <article class="card">
+          <h2 style="margin-top:0">Evolution profit / perte</h2>
+          <p class="muted">La courbe montre le cumul de tes resultats au fil du temps.</p>
+          <div class="chart"><canvas id="profitChart"></canvas></div>
+        </article>
+        <div style="display:grid;gap:18px">
+          <article class="card"><h2 style="margin-top:0">Numeros les plus joues</h2><div class="miniList" id="topNumbersList"><div class="empty">Aucune statistique disponible.</div></div></article>
+          <article class="card"><h2 style="margin-top:0">Jeux les plus utilises</h2><div class="miniList" id="gamesList"><div class="empty">Aucune donnee disponible.</div></div></article>
+        </div>
+      </section>
+    </div>
+    <footer class="footer">LottoTracker unified edition. Backend Express + SQLite, interface responsive, export JSON et mode installable.</footer>
+  </div>
+  <script>
+    const state={token:localStorage.getItem("lottoTrackerToken")||"",user:null,tickets:[],summary:null,deferredPrompt:null};
+    const $=id=>document.getElementById(id);
+    const authView=$("authView"),appView=$("appView"),verifyMessage=$("verifyMessage"),authMessage=$("authMessage"),appMessage=$("appMessage"),installBanner=$("installBanner"),installBtnBanner=$("installBtnBanner"),serverDot=$("serverDot"),serverText=$("serverText"),networkText=$("networkText");
+    const loginEmail=$("loginEmail"),loginPassword=$("loginPassword"),registerName=$("registerName"),registerEmail=$("registerEmail"),registerPassword=$("registerPassword");
+    const welcomeText=$("welcomeText"),totalTickets=$("totalTickets"),totalSpent=$("totalSpent"),totalWon=$("totalWon"),netResult=$("netResult"),ticketCountText=$("ticketCountText"),ticketList=$("ticketList"),topNumbersList=$("topNumbersList"),gamesList=$("gamesList");
+    const ticketGame=$("ticketGame"),ticketDate=$("ticketDate"),ticketNumbers=$("ticketNumbers"),ticketCost=$("ticketCost"),ticketWinnings=$("ticketWinnings"),ticketNotes=$("ticketNotes"),editingTicketId=$("editingTicketId"),formTitle=$("formTitle"),cancelEditBtn=$("cancelEditBtn"),canvas=$("profitChart"),ctx=canvas.getContext("2d");
+
+    const esc=v=>String(v??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");
+    const currency=v=>new Intl.NumberFormat("fr-CA",{style:"currency",currency:"CAD"}).format(Number(v||0));
+    const parseNumbers=raw=>[...new Set(String(raw||"").split(/[\s,;|/-]+/).map(x=>Number(x.trim())).filter(n=>Number.isInteger(n)&&n>0&&n<=99))].sort((a,b)=>a-b);
+    const setView=on=>{authView.classList.toggle("hidden",on);appView.classList.toggle("hidden",!on);};
+    const saveToken=token=>{state.token=token||"";state.token?localStorage.setItem("lottoTrackerToken",state.token):localStorage.removeItem("lottoTrackerToken");};
+    function showMessage(target,text,type){target.innerHTML=text?`<div class="message ${type}">${esc(text)}</div>`:"";}
+    function clearMessages(){verifyMessage.innerHTML="";authMessage.innerHTML="";appMessage.innerHTML="";}
+    function updateNetworkStatus(){networkText.textContent=navigator.onLine?"Reseau : en ligne":"Reseau : hors ligne";}
+    async function checkServerHealth(){try{const r=await fetch("/api/health",{cache:"no-store"});if(!r.ok)throw new Error();serverDot.className="dot online";serverText.textContent="Serveur operationnel";}catch(e){serverDot.className="dot offline";serverText.textContent="Serveur indisponible";}}
+    async function apiFetch(url,options={}){const headers={...(options.headers||{})};if(state.token)headers.Authorization="Bearer "+state.token;const response=await fetch(url,{...options,headers});let data=null;try{data=await response.json();}catch(e){}if(response.status===401&&state.token)logout(false);return{response,data};}
+    function resetTicketForm(){editingTicketId.value="";ticketGame.value="Lotto Max";ticketDate.value=new Date().toISOString().split("T")[0];ticketNumbers.value="";ticketCost.value="";ticketWinnings.value="0";ticketNotes.value="";formTitle.textContent="Ajouter un ticket";cancelEditBtn.classList.add("hidden");}
+    function fillTicketForm(ticket){editingTicketId.value=String(ticket.id);ticketGame.value=ticket.game||"Autre";ticketDate.value=ticket.drawDate||"";ticketNumbers.value=(ticket.numbers||[]).join(", ");ticketCost.value=ticket.cost??"";ticketWinnings.value=ticket.winnings??0;ticketNotes.value=ticket.notes||"";formTitle.textContent="Modifier le ticket";cancelEditBtn.classList.remove("hidden");window.scrollTo({top:0,behavior:"smooth"});}
+    const resultTag=r=>r>0?`<span class="tag win">Profit ${esc(currency(r))}</span>`:r<0?`<span class="tag loss">Perte ${esc(currency(r))}</span>`:`<span class="tag even">Egalite ${esc(currency(r))}</span>`;
+    const balls=nums=>(nums||[]).map(n=>`<span class="ball">${esc(n)}</span>`).join("");
+    function renderSummary(){const s=state.summary||{totalTickets:0,totalSpent:0,totalWon:0,netResult:0,topNumbers:[],games:[]};totalTickets.textContent=s.totalTickets||0;totalSpent.textContent=currency(s.totalSpent||0);totalWon.textContent=currency(s.totalWon||0);netResult.textContent=currency(s.netResult||0);netResult.classList.remove("pos","neg");if((s.netResult||0)>0)netResult.classList.add("pos");else if((s.netResult||0)<0)netResult.classList.add("neg");topNumbersList.innerHTML=s.topNumbers?.length?s.topNumbers.map((item,i)=>`<div class="item"><div><strong>#${i+1} - Numero ${esc(item.number)}</strong><div class="muted">Frequence dans tes tickets</div></div><div class="value" style="font-size:18px">${esc(item.count)}x</div></div>`).join(""):`<div class="empty">Aucune statistique disponible.</div>`;gamesList.innerHTML=s.games?.length?s.games.map(game=>`<div class="item"><div><strong>${esc(game.name)}</strong><div class="muted">Tickets enregistres pour ce jeu</div></div><div class="value" style="font-size:18px">${esc(game.count)}</div></div>`).join(""):`<div class="empty">Aucune donnee disponible.</div>`;}
+    function renderTickets(){const tickets=state.tickets||[];ticketCountText.textContent=`${tickets.length} ticket${tickets.length>1?"s":""}`;ticketList.innerHTML=tickets.length?tickets.map(ticket=>{const result=Number(ticket.winnings||0)-Number(ticket.cost||0);return`<article class="ticket"><div class="ticketTop"><div><div class="title">${esc(ticket.game)}</div><div class="date">${esc(ticket.drawDate)}</div></div><div>${resultTag(result)}</div></div><div class="balls">${balls(ticket.numbers)}</div><div class="metrics"><div class="metric"><div class="label">Cout</div><div class="value">${esc(currency(ticket.cost))}</div></div><div class="metric"><div class="label">Gain</div><div class="value">${esc(currency(ticket.winnings))}</div></div><div class="metric"><div class="label">Resultat</div><div class="value">${esc(currency(result))}</div></div></div>${ticket.notes?`<div class="notes">${esc(ticket.notes)}</div>`:""}<div class="row" style="margin-top:12px"><button class="mini" type="button" onclick="copyTicketNumbers(${ticket.id})">Copier</button><button class="mini" type="button" onclick="editTicket(${ticket.id})">Modifier</button><button class="mini danger" type="button" onclick="deleteTicket(${ticket.id})">Supprimer</button></div></article>`;}).join(""):`<div class="empty">Aucun ticket enregistre pour le moment.</div>`;}
+    function setupCanvas(){const ratio=window.devicePixelRatio||1;const rect=canvas.getBoundingClientRect();const w=Math.max(rect.width,280),h=Math.max(rect.height,180);canvas.width=w*ratio;canvas.height=h*ratio;ctx.setTransform(ratio,0,0,ratio,0,0);return{w,h};}
+    function drawChart(){const {w,h}=setupCanvas();const padding=window.innerWidth<760?26:36,bottom=window.innerWidth<760?28:36,chartW=w-padding*2,chartH=h-padding-bottom;ctx.clearRect(0,0,w,h);ctx.strokeStyle="rgba(148,163,184,.18)";ctx.lineWidth=1;for(let i=0;i<=4;i+=1){const y=padding+(chartH/4)*i;ctx.beginPath();ctx.moveTo(padding,y);ctx.lineTo(w-padding,y);ctx.stroke();}if(!state.tickets.length){ctx.fillStyle="#94a3b8";ctx.font="14px Trebuchet MS";ctx.textAlign="center";ctx.fillText("Aucune donnee a afficher",w/2,h/2);return;}const sorted=[...state.tickets].sort((a,b)=>a.drawDate.localeCompare(b.drawDate));let cumulative=0;const points=sorted.map((t,i)=>{cumulative+=Number(t.winnings||0)-Number(t.cost||0);return{i,value:cumulative,label:t.drawDate};});const values=points.map(p=>p.value),min=Math.min(...values,0),max=Math.max(...values,0),range=Math.max(max-min,1),getX=i=>points.length===1?padding+chartW/2:padding+(chartW*i)/(points.length-1),getY=v=>padding+chartH-(((v-min)/range)*chartH),zeroY=getY(0);ctx.strokeStyle="rgba(255,255,255,.26)";ctx.beginPath();ctx.moveTo(padding,zeroY);ctx.lineTo(w-padding,zeroY);ctx.stroke();ctx.fillStyle="#94a3b8";ctx.font="12px Trebuchet MS";ctx.textAlign="left";ctx.fillText(currency(max),6,padding+4);ctx.fillText(currency(min),6,padding+chartH);ctx.beginPath();points.forEach((p,i)=>{const x=getX(i),y=getY(p.value);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);});ctx.strokeStyle=points[points.length-1].value>=0?"#22c55e":"#ef4444";ctx.lineWidth=3;ctx.stroke();points.forEach((p,i)=>{const x=getX(i),y=getY(p.value);ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);ctx.fillStyle="#e2e8f0";ctx.fill();if(points.length<=6||i===0||i===points.length-1){ctx.fillStyle="#94a3b8";ctx.font="11px Trebuchet MS";ctx.textAlign="center";ctx.fillText(p.label.slice(5),x,h-10);}});}
+    function renderApp(){welcomeText.textContent=state.user?`Connecte comme ${state.user.name} - ${state.user.email}`:"Bienvenue";renderSummary();renderTickets();drawChart();}
+    async function loadMe(){const {response,data}=await apiFetch("/api/auth/me");if(!response.ok||!data?.ok)throw new Error(data?.message||"Impossible de charger ta session.");state.user=data.user||null;}
+    async function loadSummary(){const {response,data}=await apiFetch("/api/dashboard/summary");if(!response.ok||!data?.ok)throw new Error(data?.message||"Impossible de charger le dashboard.");state.summary=data.summary||null;}
+    async function loadTickets(){const {response,data}=await apiFetch("/api/tickets");if(!response.ok||!data?.ok)throw new Error(data?.message||"Impossible de charger les tickets.");state.tickets=data.tickets||[];}
+    async function refreshApp(success){try{clearMessages();await Promise.all([loadMe(),loadSummary(),loadTickets()]);renderApp();setView(true);if(success)showMessage(appMessage,"Donnees actualisees.","success");}catch(error){showMessage(appMessage,error.message||"Erreur de chargement.","error");}}
+    async function register(){clearMessages();const {response,data}=await apiFetch("/api/auth/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:registerName.value.trim(),email:registerEmail.value.trim(),password:registerPassword.value})});if(!response.ok||!data?.ok){showMessage(authMessage,data?.message||"Impossible de creer le compte.","error");return;}saveToken("");loginEmail.value=registerEmail.value.trim();registerName.value="";registerEmail.value="";registerPassword.value="";const extra=data?.verifyUrl?` Lien local: <a href="${data.verifyUrl}">${data.verifyUrl}</a>`:"";authMessage.innerHTML=`<div class="message success">${esc(data.message||"Compte cree.")}${extra}</div>`;}
+    async function login(){clearMessages();const email=loginEmail.value.trim();const {response,data}=await apiFetch("/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email,password:loginPassword.value})});if(!response.ok||!data?.ok){if(response.status===403&&data?.code==="EMAIL_NOT_VERIFIED"){showMessage(authMessage,data?.message||"Courriel non confirme.","error");return;}showMessage(authMessage,data?.message||"Connexion impossible.","error");return;}saveToken(data.token);loginPassword.value="";showMessage(authMessage,data.message||"Connexion reussie.","success");await refreshApp();}
+    async function resendVerification(){clearMessages();const email=loginEmail.value.trim()||registerEmail.value.trim();if(!email){showMessage(authMessage,"Entre ton courriel pour renvoyer le message de confirmation.","info");return;}const {response,data}=await apiFetch("/api/auth/resend-verification",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email})});if(!response.ok||!data?.ok){showMessage(authMessage,data?.message||"Impossible de renvoyer le courriel.","error");return;}const extra=data?.verifyUrl?` Lien local: <a href="${data.verifyUrl}">${data.verifyUrl}</a>`:"";authMessage.innerHTML=`<div class="message success">${esc(data.message||"Courriel renvoye.")}${extra}</div>`;}
+    async function verifyEmailToken(token){const {response,data}=await apiFetch("/api/auth/verify-email",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token})});if(!response.ok||!data?.ok){showMessage(verifyMessage,data?.message||"Impossible de verifier le courriel.","error");return;}showMessage(verifyMessage,data.message||"Courriel confirme.","success");window.history.replaceState({},document.title,"/");}
+    function logout(reload){saveToken("");state.user=null;state.summary=null;state.tickets=[];if(reload)location.reload();else{setView(false);showMessage(authMessage,"Ta session a expire. Reconnecte-toi.","error");}}
+    async function saveTicket(){clearMessages();const payload={game:ticketGame.value.trim(),drawDate:ticketDate.value,numbers:parseNumbers(ticketNumbers.value),cost:Number(ticketCost.value||0),winnings:Number(ticketWinnings.value||0),notes:ticketNotes.value.trim()};const id=editingTicketId.value.trim(),editing=Boolean(id);const {response,data}=await apiFetch(editing?`/api/tickets/${id}`:"/api/tickets",{method:editing?"PUT":"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});if(!response.ok||!data?.ok){showMessage(appMessage,data?.message||"Impossible de sauvegarder le ticket.","error");return;}resetTicketForm();showMessage(appMessage,data.message||"Ticket enregistre.","success");await refreshApp();}
+    async function deleteTicket(id){clearMessages();if(!confirm("Supprimer ce ticket ?"))return;const {response,data}=await apiFetch(`/api/tickets/${id}`,{method:"DELETE"});if(!response.ok||!data?.ok){showMessage(appMessage,data?.message||"Impossible de supprimer le ticket.","error");return;}showMessage(appMessage,data.message||"Ticket supprime.","success");await refreshApp();}
+    function editTicket(id){const ticket=state.tickets.find(item=>Number(item.id)===Number(id));if(!ticket){showMessage(appMessage,"Ticket introuvable.","error");return;}fillTicketForm(ticket);}
+    async function copyTicketNumbers(id){const ticket=state.tickets.find(item=>Number(item.id)===Number(id));if(!ticket)return;const text=(ticket.numbers||[]).join(", ");try{await navigator.clipboard.writeText(text);showMessage(appMessage,`Numeros copies : ${text}`,"success");}catch(e){showMessage(appMessage,"Impossible de copier automatiquement.","error");}}
+    function generateNumbers(){const input=prompt("Combien de numeros veux-tu generer ?","7");if(input===null)return;const count=Number(input);if(Number.isNaN(count)||count<=0||count>20){showMessage(appMessage,"Entre un nombre valide entre 1 et 20.","error");return;}const values=new Set();while(values.size<count)values.add(Math.floor(Math.random()*50)+1);ticketNumbers.value=[...values].sort((a,b)=>a-b).join(", ");showMessage(appMessage,"Numeros generes.","success");}
+    function exportTickets(){const blob=new Blob([JSON.stringify(state.tickets,null,2)],{type:"application/json"}),url=URL.createObjectURL(blob),link=document.createElement("a");link.href=url;link.download="lotto-tracker-export.json";document.body.appendChild(link);link.click();document.body.removeChild(link);URL.revokeObjectURL(url);showMessage(appMessage,"Export JSON telecharge.","success");}
+    async function promptInstall(){if(!state.deferredPrompt){showMessage(authView.classList.contains("hidden")?appMessage:authMessage,"L'installation n'est pas disponible pour le moment.","info");return;}state.deferredPrompt.prompt();await state.deferredPrompt.userChoice;state.deferredPrompt=null;installBanner.classList.add("hidden");}
+    $("registerBtn").addEventListener("click",register);$("loginBtn").addEventListener("click",login);$("resendVerificationBtn").addEventListener("click",resendVerification);$("refreshBtn").addEventListener("click",()=>refreshApp(true));$("logoutBtn").addEventListener("click",()=>logout(true));$("saveTicketBtn").addEventListener("click",saveTicket);$("generateBtn").addEventListener("click",generateNumbers);$("cancelEditBtn").addEventListener("click",resetTicketForm);$("exportBtn").addEventListener("click",exportTickets);installBtnBanner.addEventListener("click",promptInstall);
+    loginPassword.addEventListener("keydown",e=>{if(e.key==="Enter")login();});registerPassword.addEventListener("keydown",e=>{if(e.key==="Enter")register();});window.addEventListener("resize",drawChart);window.addEventListener("online",updateNetworkStatus);window.addEventListener("offline",updateNetworkStatus);
+    window.addEventListener("beforeinstallprompt",event=>{event.preventDefault();state.deferredPrompt=event;installBanner.classList.remove("hidden");});window.addEventListener("appinstalled",()=>{state.deferredPrompt=null;installBanner.classList.add("hidden");});
+    window.editTicket=editTicket;window.deleteTicket=deleteTicket;window.copyTicketNumbers=copyTicketNumbers;
+    if("serviceWorker" in navigator){window.addEventListener("load",async()=>{try{await navigator.serviceWorker.register("/service-worker.js");}catch(e){}});}
+    resetTicketForm();updateNetworkStatus();checkServerHealth();const verifyToken=new URLSearchParams(window.location.search).get("verify");if(verifyToken)verifyEmailToken(verifyToken);state.token?refreshApp().catch(()=>setView(false)):setView(false);
+  </script>
+</body>
+</html>
