@@ -13,9 +13,18 @@ const APP_BASE_URL = (process.env.APP_BASE_URL || `http://localhost:${PORT}`).re
 const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
 const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "";
 const VERIFICATION_HOURS = Number(process.env.EMAIL_VERIFICATION_HOURS || 24);
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || "";
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
+const STRIPE_PRICE_MONTHLY = process.env.STRIPE_PRICE_MONTHLY || "";
+const STRIPE_PRICE_YEARLY = process.env.STRIPE_PRICE_YEARLY || "";
+const STRIPE_CUSTOMER_PORTAL_RETURN_URL = process.env.STRIPE_CUSTOMER_PORTAL_RETURN_URL || `${APP_BASE_URL}/?view=billing`;
+const STRIPE_CHECKOUT_SUCCESS_URL = process.env.STRIPE_CHECKOUT_SUCCESS_URL || `${APP_BASE_URL}/?billing=success`;
+const STRIPE_CHECKOUT_CANCEL_URL = process.env.STRIPE_CHECKOUT_CANCEL_URL || `${APP_BASE_URL}/?billing=cancel`;
 const DB_DIR = path.join(__dirname, "data");
 const DB_PATH = path.join(DB_DIR, "lotto_tracker.sqlite");
 const PUBLIC_DIR = path.join(__dirname, "public");
+
+let stripeClient = null;
 
 if (!fs.existsSync(DB_DIR)) {
   fs.mkdirSync(DB_DIR, { recursive: true });
@@ -30,7 +39,14 @@ const db = new sqlite3.Database(DB_PATH, (error) => {
 });
 
 app.disable("x-powered-by");
-app.use(express.json({ limit: "2mb" }));
+app.use((req, res, next) => {
+  if (req.path === "/api/stripe/webhook") {
+    express.raw({ type: "application/json" })(req, res, next);
+    return;
+  }
+
+  express.json({ limit: "2mb" })(req, res, next);
+});
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(PUBLIC_DIR));
 
@@ -79,7 +95,6 @@ function allQuery(sql, params = []) {
 async function addColumnIfMissing(tableName, columnName, definition) {
   const rows = await allQuery(`PRAGMA table_info(${tableName})`);
   const exists = rows.some((row) => row.name === columnName);
-
   if (!exists) {
     await runQuery(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
   }
@@ -93,12 +108,16 @@ async function initDatabase() {
       email TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
       email_verified INTEGER NOT NULL DEFAULT 0,
+      plan TEXT NOT NULL DEFAULT 'FREE',
+      stripe_customer_id TEXT DEFAULT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )
   `);
 
   await addColumnIfMissing("users", "email_verified", "INTEGER NOT NULL DEFAULT 0");
+  await addColumnIfMissing("users", "plan", "TEXT NOT NULL DEFAULT 'FREE'");
+  await addColumnIfMissing("users", "stripe_customer_id", "TEXT DEFAULT NULL");
 
   await runQuery(`
     CREATE TABLE IF NOT EXISTS tickets (
@@ -110,11 +129,18 @@ async function initDatabase() {
       cost REAL NOT NULL DEFAULT 0,
       winnings REAL NOT NULL DEFAULT 0,
       notes TEXT DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'MANUAL',
+      ticket_number TEXT DEFAULT '',
+      barcode_value TEXT DEFAULT '',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       FOREIGN KEY (user_id) REFERENCES users(id)
     )
   `);
+
+  await addColumnIfMissing("tickets", "source", "TEXT NOT NULL DEFAULT 'MANUAL'");
+  await addColumnIfMissing("tickets", "ticket_number", "TEXT DEFAULT ''");
+  await addColumnIfMissing("tickets", "barcode_value", "TEXT DEFAULT ''");
 
   await runQuery(`
     CREATE TABLE IF NOT EXISTS email_verification_tokens (
@@ -128,10 +154,44 @@ async function initDatabase() {
     )
   `);
 
+  await runQuery(`
+    CREATE TABLE IF NOT EXISTS subscriptions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      stripe_customer_id TEXT NOT NULL,
+      stripe_subscription_id TEXT NOT NULL UNIQUE,
+      stripe_price_id TEXT NOT NULL,
+      plan TEXT NOT NULL DEFAULT 'PRO',
+      billing_cycle TEXT NOT NULL,
+      status TEXT NOT NULL,
+      current_period_start TEXT DEFAULT NULL,
+      current_period_end TEXT DEFAULT NULL,
+      cancel_at_period_end INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+  `);
+
+  await runQuery(`
+    CREATE TABLE IF NOT EXISTS payment_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER DEFAULT NULL,
+      stripe_event_id TEXT NOT NULL UNIQUE,
+      event_type TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+  `);
+
   await runQuery(`CREATE INDEX IF NOT EXISTS idx_tickets_user_id ON tickets(user_id)`);
   await runQuery(`CREATE INDEX IF NOT EXISTS idx_tickets_draw_date ON tickets(draw_date)`);
   await runQuery(`CREATE INDEX IF NOT EXISTS idx_email_tokens_user_id ON email_verification_tokens(user_id)`);
   await runQuery(`CREATE INDEX IF NOT EXISTS idx_email_tokens_token ON email_verification_tokens(token)`);
+  await runQuery(`CREATE INDEX IF NOT EXISTS idx_subscriptions_user_id ON subscriptions(user_id)`);
+  await runQuery(`CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON subscriptions(status)`);
+  await runQuery(`CREATE INDEX IF NOT EXISTS idx_payment_events_user_id ON payment_events(user_id)`);
 
   console.log("Database initialized.");
 }
@@ -143,7 +203,7 @@ function normalizeEmail(email) {
 function safeJsonParse(value, fallback = []) {
   try {
     const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : fallback;
+    return parsed ?? fallback;
   } catch (error) {
     return fallback;
   }
@@ -167,6 +227,8 @@ function sanitizeUser(user) {
     name: user.name,
     email: user.email,
     emailVerified: Boolean(user.email_verified),
+    plan: user.plan || "FREE",
+    stripeCustomerId: user.stripe_customer_id || null,
     createdAt: user.created_at,
     updatedAt: user.updated_at
   };
@@ -181,20 +243,16 @@ function serializeTicket(row) {
     cost: Number(row.cost || 0),
     winnings: Number(row.winnings || 0),
     notes: row.notes || "",
+    source: row.source || "MANUAL",
+    ticketNumber: row.ticket_number || "",
+    barcodeValue: row.barcode_value || "",
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
 }
 
 function signToken(user) {
-  return jwt.sign(
-    {
-      userId: user.id,
-      email: user.email
-    },
-    JWT_SECRET,
-    { expiresIn: "7d" }
-  );
+  return jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
 }
 
 function generateVerificationToken() {
@@ -203,6 +261,42 @@ function generateVerificationToken() {
 
 function getVerificationExpiry() {
   return new Date(Date.now() + VERIFICATION_HOURS * 60 * 60 * 1000).toISOString();
+}
+
+function stripeConfigured() {
+  return Boolean(STRIPE_SECRET_KEY);
+}
+
+function stripeCheckoutConfigured() {
+  return Boolean(stripeConfigured() && STRIPE_PRICE_MONTHLY && STRIPE_PRICE_YEARLY);
+}
+
+function canSendEmail() {
+  return Boolean(RESEND_API_KEY && RESEND_FROM_EMAIL);
+}
+
+function getStripeClient() {
+  if (!stripeConfigured()) {
+    throw new Error("Stripe non configure.");
+  }
+
+  if (!stripeClient) {
+    const Stripe = require("stripe");
+    stripeClient = new Stripe(STRIPE_SECRET_KEY);
+  }
+
+  return stripeClient;
+}
+
+function billingCycleFromPrice(priceId) {
+  if (priceId === STRIPE_PRICE_YEARLY) {
+    return "YEARLY";
+  }
+  return "MONTHLY";
+}
+
+function activePlanFromStatus(status) {
+  return ["active", "trialing"].includes(String(status || "").toLowerCase()) ? "PRO" : "FREE";
 }
 
 async function createVerificationToken(userId) {
@@ -218,26 +312,16 @@ async function createVerificationToken(userId) {
     [userId, token, expiresAt, now]
   );
 
-  return {
-    token,
-    expiresAt
-  };
+  return { token, expiresAt };
 }
 
 function buildVerificationUrl(token) {
   return `${APP_BASE_URL}/?verify=${encodeURIComponent(token)}`;
 }
 
-function canSendEmail() {
-  return Boolean(RESEND_API_KEY && RESEND_FROM_EMAIL);
-}
-
 async function sendVerificationEmail({ email, name, verifyUrl }) {
   if (!canSendEmail()) {
-    return {
-      sent: false,
-      previewOnly: true
-    };
+    return { sent: false, previewOnly: true };
   }
 
   const response = await fetch("https://api.resend.com/emails", {
@@ -255,11 +339,7 @@ async function sendVerificationEmail({ email, name, verifyUrl }) {
           <h2>Bienvenue sur LottoTracker</h2>
           <p>Bonjour ${name},</p>
           <p>Confirme ton adresse courriel pour activer ton compte.</p>
-          <p>
-            <a href="${verifyUrl}" style="display:inline-block;padding:12px 18px;background:#16a34a;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:700;">
-              Confirmer mon courriel
-            </a>
-          </p>
+          <p><a href="${verifyUrl}" style="display:inline-block;padding:12px 18px;background:#16a34a;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:700;">Confirmer mon courriel</a></p>
           <p>Si le bouton ne fonctionne pas, copie ce lien dans ton navigateur :</p>
           <p>${verifyUrl}</p>
         </div>
@@ -272,19 +352,12 @@ async function sendVerificationEmail({ email, name, verifyUrl }) {
     throw new Error(`Resend error: ${response.status} ${text}`);
   }
 
-  return {
-    sent: true,
-    previewOnly: false
-  };
+  return { sent: true, previewOnly: false };
 }
 
 async function issueVerificationForUser(user) {
   await runQuery(
-    `
-      UPDATE email_verification_tokens
-      SET used_at = ?
-      WHERE user_id = ? AND used_at IS NULL
-    `,
+    `UPDATE email_verification_tokens SET used_at = ? WHERE user_id = ? AND used_at IS NULL`,
     [new Date().toISOString(), user.id]
   );
 
@@ -296,10 +369,160 @@ async function issueVerificationForUser(user) {
     verifyUrl
   });
 
+  return { verifyUrl, emailResult };
+}
+
+async function getLatestSubscriptionForUser(userId) {
+  return getQuery(
+    `
+      SELECT *
+      FROM subscriptions
+      WHERE user_id = ?
+      ORDER BY id DESC
+      LIMIT 1
+    `,
+    [userId]
+  );
+}
+
+function serializeSubscription(row) {
+  if (!row) {
+    return null;
+  }
+
   return {
-    verifyUrl,
-    emailResult
+    id: row.id,
+    stripeCustomerId: row.stripe_customer_id,
+    stripeSubscriptionId: row.stripe_subscription_id,
+    stripePriceId: row.stripe_price_id,
+    plan: row.plan,
+    billingCycle: row.billing_cycle,
+    status: row.status,
+    currentPeriodStart: row.current_period_start,
+    currentPeriodEnd: row.current_period_end,
+    cancelAtPeriodEnd: Boolean(row.cancel_at_period_end),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
   };
+}
+
+async function getEffectivePlan(userId) {
+  const subscription = await getLatestSubscriptionForUser(userId);
+  if (subscription && activePlanFromStatus(subscription.status) === "PRO") {
+    return "PRO";
+  }
+  return "FREE";
+}
+
+async function ensureUserPlanCache(userId) {
+  const plan = await getEffectivePlan(userId);
+  await runQuery(`UPDATE users SET plan = ?, updated_at = ? WHERE id = ?`, [plan, new Date().toISOString(), userId]);
+  return plan;
+}
+
+async function getBillingStatusForUser(user) {
+  const subscription = await getLatestSubscriptionForUser(user.id);
+  const plan = await ensureUserPlanCache(user.id);
+  const freshUser = await getQuery(`SELECT * FROM users WHERE id = ?`, [user.id]);
+
+  return {
+    plan,
+    user: sanitizeUser(freshUser),
+    stripeConfigured: stripeCheckoutConfigured(),
+    prices: {
+      monthly: STRIPE_PRICE_MONTHLY || null,
+      yearly: STRIPE_PRICE_YEARLY || null
+    },
+    subscription: serializeSubscription(subscription)
+  };
+}
+
+async function findUserByStripeCustomerId(customerId) {
+  return getQuery(`SELECT * FROM users WHERE stripe_customer_id = ?`, [customerId]);
+}
+
+async function upsertSubscriptionRecord({ userId, customerId, subscriptionId, priceId, status, currentPeriodStart, currentPeriodEnd, cancelAtPeriodEnd }) {
+  const now = new Date().toISOString();
+  const billingCycle = billingCycleFromPrice(priceId);
+  const existing = await getQuery(`SELECT id FROM subscriptions WHERE stripe_subscription_id = ?`, [subscriptionId]);
+
+  if (existing) {
+    await runQuery(
+      `
+        UPDATE subscriptions
+        SET stripe_customer_id = ?, stripe_price_id = ?, billing_cycle = ?, status = ?, current_period_start = ?, current_period_end = ?, cancel_at_period_end = ?, updated_at = ?
+        WHERE stripe_subscription_id = ?
+      `,
+      [customerId, priceId, billingCycle, status, currentPeriodStart, currentPeriodEnd, cancelAtPeriodEnd ? 1 : 0, now, subscriptionId]
+    );
+  } else {
+    await runQuery(
+      `
+        INSERT INTO subscriptions (
+          user_id, stripe_customer_id, stripe_subscription_id, stripe_price_id, plan, billing_cycle, status,
+          current_period_start, current_period_end, cancel_at_period_end, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, 'PRO', ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [userId, customerId, subscriptionId, priceId, billingCycle, status, currentPeriodStart, currentPeriodEnd, cancelAtPeriodEnd ? 1 : 0, now, now]
+    );
+  }
+
+  await runQuery(
+    `UPDATE users SET stripe_customer_id = ?, plan = ?, updated_at = ? WHERE id = ?`,
+    [customerId, activePlanFromStatus(status), now, userId]
+  );
+}
+
+async function recordStripeEvent(event, userId = null) {
+  try {
+    await runQuery(
+      `
+        INSERT INTO payment_events (user_id, stripe_event_id, event_type, payload_json, created_at)
+        VALUES (?, ?, ?, ?, ?)
+      `,
+      [userId, event.id, event.type, JSON.stringify(event), new Date().toISOString()]
+    );
+  } catch (error) {
+    if (!String(error.message || "").includes("UNIQUE")) {
+      throw error;
+    }
+  }
+}
+
+async function syncStripeSubscription(subscription, fallbackUserId = null) {
+  const customerId = String(subscription.customer || "");
+  let user = customerId ? await findUserByStripeCustomerId(customerId) : null;
+
+  if (!user && fallbackUserId) {
+    user = await getQuery(`SELECT * FROM users WHERE id = ?`, [fallbackUserId]);
+  }
+
+  if (!user) {
+    throw new Error("Utilisateur Stripe introuvable.");
+  }
+
+  if (customerId && user.stripe_customer_id !== customerId) {
+    await runQuery(`UPDATE users SET stripe_customer_id = ?, updated_at = ? WHERE id = ?`, [customerId, new Date().toISOString(), user.id]);
+  }
+
+  const priceId = subscription.items?.data?.[0]?.price?.id || "";
+  const currentPeriodStart = subscription.current_period_start ? new Date(subscription.current_period_start * 1000).toISOString() : null;
+  const currentPeriodEnd = subscription.current_period_end ? new Date(subscription.current_period_end * 1000).toISOString() : null;
+
+  await upsertSubscriptionRecord({
+    userId: user.id,
+    customerId,
+    subscriptionId: subscription.id,
+    priceId,
+    status: subscription.status,
+    currentPeriodStart,
+    currentPeriodEnd,
+    cancelAtPeriodEnd: Boolean(subscription.cancel_at_period_end)
+  });
+
+  await ensureUserPlanCache(user.id);
+  return user;
 }
 
 async function authMiddleware(req, res, next) {
@@ -308,28 +531,15 @@ async function authMiddleware(req, res, next) {
     const [scheme, token] = authHeader.split(" ");
 
     if (scheme !== "Bearer" || !token) {
-      res.status(401).json({
-        ok: false,
-        message: "Acces non autorise."
-      });
+      res.status(401).json({ ok: false, message: "Acces non autorise." });
       return;
     }
 
     const decoded = jwt.verify(token, JWT_SECRET);
-    const user = await getQuery(
-      `
-        SELECT id, name, email, email_verified, created_at, updated_at
-        FROM users
-        WHERE id = ?
-      `,
-      [decoded.userId]
-    );
+    const user = await getQuery(`SELECT * FROM users WHERE id = ?`, [decoded.userId]);
 
     if (!user) {
-      res.status(401).json({
-        ok: false,
-        message: "Utilisateur introuvable."
-      });
+      res.status(401).json({ ok: false, message: "Utilisateur introuvable." });
       return;
     }
 
@@ -342,26 +552,16 @@ async function authMiddleware(req, res, next) {
       return;
     }
 
+    user.plan = await ensureUserPlanCache(user.id);
     req.user = user;
     next();
   } catch (error) {
-    res.status(401).json({
-      ok: false,
-      message: "Session invalide ou expiree."
-    });
+    res.status(401).json({ ok: false, message: "Session invalide ou expiree." });
   }
 }
 
 async function buildSummaryForUser(userId) {
-  const rows = await allQuery(
-    `
-      SELECT game, cost, winnings, numbers_json
-      FROM tickets
-      WHERE user_id = ?
-    `,
-    [userId]
-  );
-
+  const rows = await allQuery(`SELECT game, cost, winnings, numbers_json FROM tickets WHERE user_id = ?`, [userId]);
   const totalTickets = rows.length;
   const totalSpent = rows.reduce((sum, row) => sum + Number(row.cost || 0), 0);
   const totalWon = rows.reduce((sum, row) => sum + Number(row.winnings || 0), 0);
@@ -387,14 +587,7 @@ async function buildSummaryForUser(userId) {
     .map(([name, count]) => ({ name, count }))
     .sort((a, b) => b.count - a.count);
 
-  return {
-    totalTickets,
-    totalSpent,
-    totalWon,
-    netResult,
-    topNumbers,
-    games
-  };
+  return { totalTickets, totalSpent, totalWon, netResult, topNumbers, games };
 }
 
 app.get("/api/health", async (req, res) => {
@@ -402,7 +595,8 @@ app.get("/api/health", async (req, res) => {
     ok: true,
     app: "LottoTracker Unified",
     time: new Date().toISOString(),
-    emailProviderConfigured: canSendEmail()
+    emailProviderConfigured: canSendEmail(),
+    stripeConfigured: stripeCheckoutConfigured()
   });
 });
 
@@ -416,50 +610,32 @@ app.post("/api/auth/register", async (req, res) => {
       res.status(400).json({ ok: false, message: "Le nom doit contenir au moins 2 caracteres." });
       return;
     }
-
     if (!email || !email.includes("@")) {
       res.status(400).json({ ok: false, message: "Le courriel est invalide." });
       return;
     }
-
     if (password.length < 6) {
       res.status(400).json({ ok: false, message: "Le mot de passe doit contenir au moins 6 caracteres." });
       return;
     }
 
-    const existingUser = await getQuery(
-      "SELECT id, email_verified FROM users WHERE email = ?",
-      [email]
-    );
-
+    const existingUser = await getQuery(`SELECT id FROM users WHERE email = ?`, [email]);
     if (existingUser) {
-      res.status(409).json({
-        ok: false,
-        message: "Ce courriel est deja utilise."
-      });
+      res.status(409).json({ ok: false, message: "Ce courriel est deja utilise." });
       return;
     }
 
     const now = new Date().toISOString();
     const passwordHash = await bcrypt.hash(password, 10);
-
     const result = await runQuery(
       `
-        INSERT INTO users (name, email, password_hash, email_verified, created_at, updated_at)
-        VALUES (?, ?, ?, 0, ?, ?)
+        INSERT INTO users (name, email, password_hash, email_verified, plan, created_at, updated_at)
+        VALUES (?, ?, ?, 0, 'FREE', ?, ?)
       `,
       [name, email, passwordHash, now, now]
     );
 
-    const user = await getQuery(
-      `
-        SELECT id, name, email, email_verified, created_at, updated_at
-        FROM users
-        WHERE id = ?
-      `,
-      [result.lastID]
-    );
-
+    const user = await getQuery(`SELECT * FROM users WHERE id = ?`, [result.lastID]);
     const verification = await issueVerificationForUser(user);
 
     res.status(201).json({
@@ -474,10 +650,7 @@ app.post("/api/auth/register", async (req, res) => {
     });
   } catch (error) {
     console.error("Register error:", error);
-    res.status(500).json({
-      ok: false,
-      message: "Erreur serveur pendant la creation du compte."
-    });
+    res.status(500).json({ ok: false, message: "Erreur serveur pendant la creation du compte." });
   }
 });
 
@@ -487,23 +660,12 @@ app.post("/api/auth/login", async (req, res) => {
     const password = String(req.body.password || "");
 
     if (!email || !password) {
-      res.status(400).json({
-        ok: false,
-        message: "Courriel ou mot de passe manquant."
-      });
+      res.status(400).json({ ok: false, message: "Courriel ou mot de passe manquant." });
       return;
     }
 
-    const user = await getQuery("SELECT * FROM users WHERE email = ?", [email]);
-
-    if (!user) {
-      res.status(401).json({ ok: false, message: "Identifiants invalides." });
-      return;
-    }
-
-    const passwordIsValid = await bcrypt.compare(password, user.password_hash);
-
-    if (!passwordIsValid) {
+    const user = await getQuery(`SELECT * FROM users WHERE email = ?`, [email]);
+    if (!user || !(await bcrypt.compare(password, user.password_hash))) {
       res.status(401).json({ ok: false, message: "Identifiants invalides." });
       return;
     }
@@ -517,60 +679,33 @@ app.post("/api/auth/login", async (req, res) => {
       return;
     }
 
-    res.json({
-      ok: true,
-      message: "Connexion reussie.",
-      token: signToken(user),
-      user: sanitizeUser(user)
-    });
+    user.plan = await ensureUserPlanCache(user.id);
+    res.json({ ok: true, message: "Connexion reussie.", token: signToken(user), user: sanitizeUser(user) });
   } catch (error) {
     console.error("Login error:", error);
-    res.status(500).json({
-      ok: false,
-      message: "Erreur serveur pendant la connexion."
-    });
+    res.status(500).json({ ok: false, message: "Erreur serveur pendant la connexion." });
   }
 });
 
 app.post("/api/auth/resend-verification", async (req, res) => {
   try {
     const email = normalizeEmail(req.body.email);
-
     if (!email) {
-      res.status(400).json({
-        ok: false,
-        message: "Le courriel est requis."
-      });
+      res.status(400).json({ ok: false, message: "Le courriel est requis." });
       return;
     }
 
-    const user = await getQuery(
-      `
-        SELECT id, name, email, email_verified, created_at, updated_at
-        FROM users
-        WHERE email = ?
-      `,
-      [email]
-    );
-
+    const user = await getQuery(`SELECT * FROM users WHERE email = ?`, [email]);
     if (!user) {
-      res.status(404).json({
-        ok: false,
-        message: "Aucun compte trouve avec ce courriel."
-      });
+      res.status(404).json({ ok: false, message: "Aucun compte trouve avec ce courriel." });
       return;
     }
-
     if (user.email_verified) {
-      res.status(400).json({
-        ok: false,
-        message: "Ce compte est deja confirme."
-      });
+      res.status(400).json({ ok: false, message: "Ce compte est deja confirme." });
       return;
     }
 
     const verification = await issueVerificationForUser(user);
-
     res.json({
       ok: true,
       message: canSendEmail()
@@ -581,96 +716,34 @@ app.post("/api/auth/resend-verification", async (req, res) => {
     });
   } catch (error) {
     console.error("Resend verification error:", error);
-    res.status(500).json({
-      ok: false,
-      message: "Erreur serveur pendant l'envoi du courriel de verification."
-    });
+    res.status(500).json({ ok: false, message: "Erreur serveur pendant l'envoi du courriel de verification." });
   }
 });
 
 app.post("/api/auth/verify-email", async (req, res) => {
   try {
     const token = String(req.body.token || "").trim();
-
     if (!token) {
-      res.status(400).json({
-        ok: false,
-        message: "Le token de verification est requis."
-      });
+      res.status(400).json({ ok: false, message: "Le token de verification est requis." });
       return;
     }
 
-    const tokenRow = await getQuery(
-      `
-        SELECT id, user_id, token, expires_at, created_at, used_at
-        FROM email_verification_tokens
-        WHERE token = ?
-      `,
-      [token]
-    );
-
+    const tokenRow = await getQuery(`SELECT * FROM email_verification_tokens WHERE token = ?`, [token]);
     if (!tokenRow || tokenRow.used_at) {
-      res.status(400).json({
-        ok: false,
-        message: "Ce lien de verification est invalide ou deja utilise."
-      });
+      res.status(400).json({ ok: false, message: "Ce lien de verification est invalide ou deja utilise." });
       return;
     }
-
     if (new Date(tokenRow.expires_at).getTime() < Date.now()) {
-      res.status(400).json({
-        ok: false,
-        message: "Ce lien de verification a expire."
-      });
-      return;
-    }
-
-    const user = await getQuery(
-      `
-        SELECT id, name, email, email_verified, created_at, updated_at
-        FROM users
-        WHERE id = ?
-      `,
-      [tokenRow.user_id]
-    );
-
-    if (!user) {
-      res.status(404).json({
-        ok: false,
-        message: "Utilisateur introuvable."
-      });
+      res.status(400).json({ ok: false, message: "Ce lien de verification a expire." });
       return;
     }
 
     const now = new Date().toISOString();
+    await runQuery(`UPDATE users SET email_verified = 1, updated_at = ? WHERE id = ?`, [now, tokenRow.user_id]);
+    await runQuery(`UPDATE email_verification_tokens SET used_at = ? WHERE id = ?`, [now, tokenRow.id]);
 
-    await runQuery(
-      `
-        UPDATE users
-        SET email_verified = 1, updated_at = ?
-        WHERE id = ?
-      `,
-      [now, user.id]
-    );
-
-    await runQuery(
-      `
-        UPDATE email_verification_tokens
-        SET used_at = ?
-        WHERE id = ?
-      `,
-      [now, tokenRow.id]
-    );
-
-    const verifiedUser = await getQuery(
-      `
-        SELECT id, name, email, email_verified, created_at, updated_at
-        FROM users
-        WHERE id = ?
-      `,
-      [user.id]
-    );
-
+    const verifiedUser = await getQuery(`SELECT * FROM users WHERE id = ?`, [tokenRow.user_id]);
+    verifiedUser.plan = await ensureUserPlanCache(verifiedUser.id);
     res.json({
       ok: true,
       message: "Ton courriel a bien ete confirme. Tu peux maintenant te connecter.",
@@ -678,36 +751,158 @@ app.post("/api/auth/verify-email", async (req, res) => {
     });
   } catch (error) {
     console.error("Verify email error:", error);
-    res.status(500).json({
-      ok: false,
-      message: "Erreur serveur pendant la verification du courriel."
-    });
+    res.status(500).json({ ok: false, message: "Erreur serveur pendant la verification du courriel." });
   }
 });
 
 app.get("/api/auth/me", authMiddleware, async (req, res) => {
-  res.json({
-    ok: true,
-    user: sanitizeUser(req.user)
-  });
+  const billing = await getBillingStatusForUser(req.user);
+  res.json({ ok: true, user: billing.user, billing });
+});
+
+app.get("/api/billing/status", authMiddleware, async (req, res) => {
+  try {
+    const billing = await getBillingStatusForUser(req.user);
+    res.json({ ok: true, billing });
+  } catch (error) {
+    console.error("Billing status error:", error);
+    res.status(500).json({ ok: false, message: "Impossible de charger l'abonnement." });
+  }
+});
+
+app.post("/api/billing/create-checkout-session", authMiddleware, async (req, res) => {
+  try {
+    if (!stripeCheckoutConfigured()) {
+      res.status(400).json({ ok: false, message: "Stripe n'est pas encore configure." });
+      return;
+    }
+
+    const priceId = String(req.body.priceId || "");
+    if (![STRIPE_PRICE_MONTHLY, STRIPE_PRICE_YEARLY].includes(priceId)) {
+      res.status(400).json({ ok: false, message: "Offre Stripe invalide." });
+      return;
+    }
+
+    const stripe = getStripeClient();
+    let customerId = req.user.stripe_customer_id || "";
+
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        email: req.user.email,
+        name: req.user.name,
+        metadata: { userId: String(req.user.id) }
+      });
+      customerId = customer.id;
+      await runQuery(`UPDATE users SET stripe_customer_id = ?, updated_at = ? WHERE id = ?`, [customerId, new Date().toISOString(), req.user.id]);
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      customer: customerId,
+      line_items: [{ price: priceId, quantity: 1 }],
+      success_url: STRIPE_CHECKOUT_SUCCESS_URL,
+      cancel_url: STRIPE_CHECKOUT_CANCEL_URL,
+      allow_promotion_codes: false,
+      metadata: { userId: String(req.user.id) }
+    });
+
+    res.json({ ok: true, url: session.url });
+  } catch (error) {
+    console.error("Create checkout session error:", error);
+    res.status(500).json({ ok: false, message: "Impossible de lancer le paiement Stripe." });
+  }
+});
+
+app.post("/api/billing/create-customer-portal", authMiddleware, async (req, res) => {
+  try {
+    if (!stripeConfigured()) {
+      res.status(400).json({ ok: false, message: "Stripe n'est pas configure." });
+      return;
+    }
+    if (!req.user.stripe_customer_id) {
+      res.status(400).json({ ok: false, message: "Aucun client Stripe trouve pour ce compte." });
+      return;
+    }
+
+    const stripe = getStripeClient();
+    const portal = await stripe.billingPortal.sessions.create({
+      customer: req.user.stripe_customer_id,
+      return_url: STRIPE_CUSTOMER_PORTAL_RETURN_URL
+    });
+
+    res.json({ ok: true, url: portal.url });
+  } catch (error) {
+    console.error("Create portal error:", error);
+    res.status(500).json({ ok: false, message: "Impossible d'ouvrir la gestion d'abonnement." });
+  }
+});
+
+app.post("/api/stripe/webhook", async (req, res) => {
+  try {
+    if (!stripeConfigured() || !STRIPE_WEBHOOK_SECRET) {
+      res.status(400).send("Stripe webhook non configure.");
+      return;
+    }
+
+    const stripe = getStripeClient();
+    const signature = req.headers["stripe-signature"];
+    let event;
+
+    try {
+      event = stripe.webhooks.constructEvent(req.body, signature, STRIPE_WEBHOOK_SECRET);
+    } catch (error) {
+      console.error("Stripe signature error:", error.message);
+      res.status(400).send(`Webhook Error: ${error.message}`);
+      return;
+    }
+
+    const object = event.data.object;
+
+    if (event.type === "checkout.session.completed") {
+      const fallbackUserId = Number(object.metadata?.userId || 0) || null;
+      if (object.subscription) {
+        const subscription = await stripe.subscriptions.retrieve(object.subscription);
+        const user = await syncStripeSubscription(subscription, fallbackUserId);
+        await recordStripeEvent(event, user.id);
+      } else {
+        await recordStripeEvent(event, fallbackUserId);
+      }
+    }
+
+    if (event.type === "customer.subscription.created" || event.type === "customer.subscription.updated" || event.type === "customer.subscription.deleted") {
+      const user = await syncStripeSubscription(object);
+      await recordStripeEvent(event, user.id);
+    }
+
+    if (event.type === "invoice.payment_succeeded" || event.type === "invoice.payment_failed") {
+      const user = object.customer ? await findUserByStripeCustomerId(String(object.customer)) : null;
+      if (user) {
+        await ensureUserPlanCache(user.id);
+        await recordStripeEvent(event, user.id);
+      } else {
+        await recordStripeEvent(event, null);
+      }
+    }
+
+    res.json({ received: true });
+  } catch (error) {
+    console.error("Stripe webhook error:", error);
+    res.status(500).send("Stripe webhook server error.");
+  }
 });
 
 app.get("/api/tickets", authMiddleware, async (req, res) => {
   try {
     const rows = await allQuery(
       `
-        SELECT id, game, draw_date, numbers_json, cost, winnings, notes, created_at, updated_at
+        SELECT id, game, draw_date, numbers_json, cost, winnings, notes, source, ticket_number, barcode_value, created_at, updated_at
         FROM tickets
         WHERE user_id = ?
         ORDER BY draw_date DESC, id DESC
       `,
       [req.user.id]
     );
-
-    res.json({
-      ok: true,
-      tickets: rows.map(serializeTicket)
-    });
+    res.json({ ok: true, tickets: rows.map(serializeTicket) });
   } catch (error) {
     console.error("Tickets GET error:", error);
     res.status(500).json({ ok: false, message: "Erreur serveur pendant la lecture des tickets." });
@@ -722,52 +917,50 @@ app.post("/api/tickets", authMiddleware, async (req, res) => {
     const cost = Number(req.body.cost || 0);
     const winnings = Number(req.body.winnings || 0);
     const notes = String(req.body.notes || "").trim();
+    const source = String(req.body.source || "MANUAL").trim().toUpperCase();
+    const ticketNumber = String(req.body.ticketNumber || "").trim();
+    const barcodeValue = String(req.body.barcodeValue || "").trim();
 
     if (!game) {
       res.status(400).json({ ok: false, message: "Le jeu est requis." });
       return;
     }
-
     if (!drawDate) {
       res.status(400).json({ ok: false, message: "La date du tirage est requise." });
       return;
     }
-
     if (!numbers.length) {
       res.status(400).json({ ok: false, message: "Ajoute au moins un numero valide." });
       return;
     }
-
     if (Number.isNaN(cost) || cost < 0 || Number.isNaN(winnings) || winnings < 0) {
       res.status(400).json({ ok: false, message: "Les montants sont invalides." });
+      return;
+    }
+    if (source === "SCAN" && req.user.plan !== "PRO") {
+      res.status(403).json({ ok: false, code: "PLAN_UPGRADE_REQUIRED", message: "Le scan automatique est reserve au plan Pro." });
       return;
     }
 
     const now = new Date().toISOString();
     const result = await runQuery(
       `
-        INSERT INTO tickets (
-          user_id, game, draw_date, numbers_json, cost, winnings, notes, created_at, updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO tickets (user_id, game, draw_date, numbers_json, cost, winnings, notes, source, ticket_number, barcode_value, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
-      [req.user.id, game, drawDate, JSON.stringify(numbers), cost, winnings, notes, now, now]
+      [req.user.id, game, drawDate, JSON.stringify(numbers), cost, winnings, notes, source, ticketNumber, barcodeValue, now, now]
     );
 
     const ticketRow = await getQuery(
       `
-        SELECT id, game, draw_date, numbers_json, cost, winnings, notes, created_at, updated_at
+        SELECT id, game, draw_date, numbers_json, cost, winnings, notes, source, ticket_number, barcode_value, created_at, updated_at
         FROM tickets
         WHERE id = ? AND user_id = ?
       `,
       [result.lastID, req.user.id]
     );
 
-    res.status(201).json({
-      ok: true,
-      message: "Ticket ajoute avec succes.",
-      ticket: serializeTicket(ticketRow)
-    });
+    res.status(201).json({ ok: true, message: "Ticket ajoute avec succes.", ticket: serializeTicket(ticketRow) });
   } catch (error) {
     console.error("Tickets POST error:", error);
     res.status(500).json({ ok: false, message: "Erreur serveur pendant l'ajout du ticket." });
@@ -777,17 +970,12 @@ app.post("/api/tickets", authMiddleware, async (req, res) => {
 app.put("/api/tickets/:id", authMiddleware, async (req, res) => {
   try {
     const ticketId = Number(req.params.id);
-
     if (!Number.isInteger(ticketId) || ticketId <= 0) {
       res.status(400).json({ ok: false, message: "ID ticket invalide." });
       return;
     }
 
-    const existingTicket = await getQuery(
-      "SELECT id FROM tickets WHERE id = ? AND user_id = ?",
-      [ticketId, req.user.id]
-    );
-
+    const existingTicket = await getQuery(`SELECT * FROM tickets WHERE id = ? AND user_id = ?`, [ticketId, req.user.id]);
     if (!existingTicket) {
       res.status(404).json({ ok: false, message: "Ticket introuvable." });
       return;
@@ -799,42 +987,42 @@ app.put("/api/tickets/:id", authMiddleware, async (req, res) => {
     const cost = Number(req.body.cost || 0);
     const winnings = Number(req.body.winnings || 0);
     const notes = String(req.body.notes || "").trim();
+    const source = String(req.body.source || existingTicket.source || "MANUAL").trim().toUpperCase();
+    const ticketNumber = String(req.body.ticketNumber ?? existingTicket.ticket_number ?? "").trim();
+    const barcodeValue = String(req.body.barcodeValue ?? existingTicket.barcode_value ?? "").trim();
 
     if (!game || !drawDate || !numbers.length) {
       res.status(400).json({ ok: false, message: "Les donnees du ticket sont invalides." });
       return;
     }
-
     if (Number.isNaN(cost) || cost < 0 || Number.isNaN(winnings) || winnings < 0) {
       res.status(400).json({ ok: false, message: "Les montants sont invalides." });
       return;
     }
-
-    const now = new Date().toISOString();
+    if (source === "SCAN" && req.user.plan !== "PRO") {
+      res.status(403).json({ ok: false, code: "PLAN_UPGRADE_REQUIRED", message: "Le scan automatique est reserve au plan Pro." });
+      return;
+    }
 
     await runQuery(
       `
         UPDATE tickets
-        SET game = ?, draw_date = ?, numbers_json = ?, cost = ?, winnings = ?, notes = ?, updated_at = ?
+        SET game = ?, draw_date = ?, numbers_json = ?, cost = ?, winnings = ?, notes = ?, source = ?, ticket_number = ?, barcode_value = ?, updated_at = ?
         WHERE id = ? AND user_id = ?
       `,
-      [game, drawDate, JSON.stringify(numbers), cost, winnings, notes, now, ticketId, req.user.id]
+      [game, drawDate, JSON.stringify(numbers), cost, winnings, notes, source, ticketNumber, barcodeValue, new Date().toISOString(), ticketId, req.user.id]
     );
 
     const ticketRow = await getQuery(
       `
-        SELECT id, game, draw_date, numbers_json, cost, winnings, notes, created_at, updated_at
+        SELECT id, game, draw_date, numbers_json, cost, winnings, notes, source, ticket_number, barcode_value, created_at, updated_at
         FROM tickets
         WHERE id = ? AND user_id = ?
       `,
       [ticketId, req.user.id]
     );
 
-    res.json({
-      ok: true,
-      message: "Ticket mis a jour avec succes.",
-      ticket: serializeTicket(ticketRow)
-    });
+    res.json({ ok: true, message: "Ticket mis a jour avec succes.", ticket: serializeTicket(ticketRow) });
   } catch (error) {
     console.error("Tickets PUT error:", error);
     res.status(500).json({ ok: false, message: "Erreur serveur pendant la modification." });
@@ -844,26 +1032,18 @@ app.put("/api/tickets/:id", authMiddleware, async (req, res) => {
 app.delete("/api/tickets/:id", authMiddleware, async (req, res) => {
   try {
     const ticketId = Number(req.params.id);
-
     if (!Number.isInteger(ticketId) || ticketId <= 0) {
       res.status(400).json({ ok: false, message: "ID ticket invalide." });
       return;
     }
 
-    const result = await runQuery(
-      "DELETE FROM tickets WHERE id = ? AND user_id = ?",
-      [ticketId, req.user.id]
-    );
-
+    const result = await runQuery(`DELETE FROM tickets WHERE id = ? AND user_id = ?`, [ticketId, req.user.id]);
     if (!result.changes) {
       res.status(404).json({ ok: false, message: "Ticket introuvable." });
       return;
     }
 
-    res.json({
-      ok: true,
-      message: "Ticket supprime avec succes."
-    });
+    res.json({ ok: true, message: "Ticket supprime avec succes." });
   } catch (error) {
     console.error("Tickets DELETE error:", error);
     res.status(500).json({ ok: false, message: "Erreur serveur pendant la suppression." });
@@ -882,16 +1062,11 @@ app.get("/api/dashboard/summary", authMiddleware, async (req, res) => {
 
 app.get("*", (req, res) => {
   const indexPath = path.join(PUBLIC_DIR, "index.html");
-
   if (fs.existsSync(indexPath)) {
     res.sendFile(indexPath);
     return;
   }
-
-  res.status(200).send(`
-    <h1>LottoTracker Unified</h1>
-    <p>Le backend fonctionne, mais public/index.html est introuvable.</p>
-  `);
+  res.status(200).send("<h1>LottoTracker Unified</h1><p>Le backend fonctionne, mais public/index.html est introuvable.</p>");
 });
 
 initDatabase()
@@ -899,9 +1074,11 @@ initDatabase()
     if (JWT_SECRET === "change-me-in-production") {
       console.warn("Warning: JWT_SECRET is using the default development value.");
     }
-
     if (!canSendEmail()) {
       console.warn("Warning: Resend email is not configured. Verification links will be returned in API responses.");
+    }
+    if (!stripeConfigured()) {
+      console.warn("Warning: Stripe is not configured yet.");
     }
 
     app.listen(PORT, () => {
