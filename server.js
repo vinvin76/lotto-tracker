@@ -107,7 +107,15 @@ async function initDatabase() {
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
+      username TEXT DEFAULT NULL,
       email TEXT NOT NULL UNIQUE,
+      phone TEXT DEFAULT '',
+      address_line1 TEXT DEFAULT '',
+      city TEXT DEFAULT '',
+      province TEXT DEFAULT '',
+      postal_code TEXT DEFAULT '',
+      country TEXT DEFAULT 'CA',
+      payment_method_preference TEXT DEFAULT 'CARD',
       password_hash TEXT NOT NULL,
       email_verified INTEGER NOT NULL DEFAULT 0,
       plan TEXT NOT NULL DEFAULT 'FREE',
@@ -121,6 +129,14 @@ async function initDatabase() {
   await addColumnIfMissing("users", "plan", "TEXT NOT NULL DEFAULT 'FREE'");
   await addColumnIfMissing("users", "stripe_customer_id", "TEXT DEFAULT NULL");
   await addColumnIfMissing("users", "plan_gifted", "INTEGER DEFAULT 0");
+  await addColumnIfMissing("users", "username", "TEXT DEFAULT NULL");
+  await addColumnIfMissing("users", "phone", "TEXT DEFAULT ''");
+  await addColumnIfMissing("users", "address_line1", "TEXT DEFAULT ''");
+  await addColumnIfMissing("users", "city", "TEXT DEFAULT ''");
+  await addColumnIfMissing("users", "province", "TEXT DEFAULT ''");
+  await addColumnIfMissing("users", "postal_code", "TEXT DEFAULT ''");
+  await addColumnIfMissing("users", "country", "TEXT DEFAULT 'CA'");
+  await addColumnIfMissing("users", "payment_method_preference", "TEXT DEFAULT 'CARD'");
 
   await runQuery(`
     CREATE TABLE IF NOT EXISTS tickets (
@@ -161,7 +177,15 @@ async function initDatabase() {
     CREATE TABLE IF NOT EXISTS pending_registrations (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
+      username TEXT DEFAULT NULL,
       email TEXT NOT NULL UNIQUE,
+      phone TEXT DEFAULT '',
+      address_line1 TEXT DEFAULT '',
+      city TEXT DEFAULT '',
+      province TEXT DEFAULT '',
+      postal_code TEXT DEFAULT '',
+      country TEXT DEFAULT 'CA',
+      payment_method_preference TEXT DEFAULT 'CARD',
       password_hash TEXT NOT NULL,
       selected_plan TEXT NOT NULL DEFAULT 'FREE',
       billing_cycle TEXT NOT NULL DEFAULT 'MONTHLY',
@@ -173,6 +197,14 @@ async function initDatabase() {
       updated_at TEXT NOT NULL
     )
   `);
+  await addColumnIfMissing("pending_registrations", "username", "TEXT DEFAULT NULL");
+  await addColumnIfMissing("pending_registrations", "phone", "TEXT DEFAULT ''");
+  await addColumnIfMissing("pending_registrations", "address_line1", "TEXT DEFAULT ''");
+  await addColumnIfMissing("pending_registrations", "city", "TEXT DEFAULT ''");
+  await addColumnIfMissing("pending_registrations", "province", "TEXT DEFAULT ''");
+  await addColumnIfMissing("pending_registrations", "postal_code", "TEXT DEFAULT ''");
+  await addColumnIfMissing("pending_registrations", "country", "TEXT DEFAULT 'CA'");
+  await addColumnIfMissing("pending_registrations", "payment_method_preference", "TEXT DEFAULT 'CARD'");
 
   await runQuery(`
     CREATE TABLE IF NOT EXISTS subscriptions (
@@ -222,6 +254,27 @@ function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
 }
 
+function normalizeUsername(username) {
+  return String(username || "").trim();
+}
+
+function normalizePhone(phone) {
+  return String(phone || "").trim();
+}
+
+function normalizeAddress(value) {
+  return String(value || "").trim();
+}
+
+function normalizeCountry(country) {
+  const normalized = String(country || "").trim().toUpperCase();
+  return normalized || "CA";
+}
+
+function normalizePaymentMethodPreference(value) {
+  return String(value || "").trim().toUpperCase() === "PAYPAL" ? "PAYPAL" : "CARD";
+}
+
 function safeJsonParse(value, fallback = []) {
   try {
     const parsed = JSON.parse(value);
@@ -247,7 +300,15 @@ function sanitizeUser(user) {
   return {
     id: user.id,
     name: user.name,
+    username: user.username || "",
     email: user.email,
+    phone: user.phone || "",
+    addressLine1: user.address_line1 || "",
+    city: user.city || "",
+    province: user.province || "",
+    postalCode: user.postal_code || "",
+    country: user.country || "CA",
+    paymentMethodPreference: user.payment_method_preference || "CARD",
     emailVerified: Boolean(user.email_verified),
     plan: user.plan || "FREE",
     stripeCustomerId: user.stripe_customer_id || null,
@@ -413,7 +474,23 @@ async function issueVerificationForUser(user) {
   return { verifyUrl, emailResult };
 }
 
-async function createOrReplacePendingRegistration({ name, email, passwordHash, selectedPlan, billingCycle, stripeCustomerId = null, checkoutUrl = null }) {
+async function createOrReplacePendingRegistration({
+  name,
+  username = null,
+  email,
+  phone = "",
+  addressLine1 = "",
+  city = "",
+  province = "",
+  postalCode = "",
+  country = "CA",
+  paymentMethodPreference = "CARD",
+  passwordHash,
+  selectedPlan,
+  billingCycle,
+  stripeCustomerId = null,
+  checkoutUrl = null
+}) {
   const now = new Date().toISOString();
   const token = generateVerificationToken();
   const expiresAt = getVerificationExpiry();
@@ -423,11 +500,32 @@ async function createOrReplacePendingRegistration({ name, email, passwordHash, s
   const result = await runQuery(
     `
       INSERT INTO pending_registrations (
-        name, email, password_hash, selected_plan, billing_cycle, stripe_customer_id, checkout_url, token, expires_at, created_at, updated_at
+        name, username, email, phone, address_line1, city, province, postal_code, country, payment_method_preference,
+        password_hash, selected_plan, billing_cycle, stripe_customer_id, checkout_url, token, expires_at, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
-    [name, email, passwordHash, selectedPlan, billingCycle, stripeCustomerId, checkoutUrl, token, expiresAt, now, now]
+    [
+      name,
+      username,
+      email,
+      phone,
+      addressLine1,
+      city,
+      province,
+      postalCode,
+      country,
+      paymentMethodPreference,
+      passwordHash,
+      selectedPlan,
+      billingCycle,
+      stripeCustomerId,
+      checkoutUrl,
+      token,
+      expiresAt,
+      now,
+      now
+    ]
   );
 
   return getQuery(`SELECT * FROM pending_registrations WHERE id = ?`, [result.lastID]);
@@ -580,8 +678,29 @@ async function activatePendingAsProUser(customerId) {
 
   const now = new Date().toISOString();
   const result = await runQuery(
-    `INSERT INTO users (name, email, password_hash, email_verified, plan, stripe_customer_id, created_at, updated_at) VALUES (?, ?, ?, 0, 'PRO', ?, ?, ?)`,
-    [pending.name, pending.email, pending.password_hash, customerId, now, now]
+    `
+      INSERT INTO users (
+        name, username, email, phone, address_line1, city, province, postal_code, country, payment_method_preference,
+        password_hash, email_verified, plan, stripe_customer_id, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'PRO', ?, ?, ?)
+    `,
+    [
+      pending.name,
+      pending.username,
+      pending.email,
+      pending.phone,
+      pending.address_line1,
+      pending.city,
+      pending.province,
+      pending.postal_code,
+      pending.country,
+      pending.payment_method_preference,
+      pending.password_hash,
+      customerId,
+      now,
+      now
+    ]
   );
 
   const newUser = await getQuery(`SELECT * FROM users WHERE id = ?`, [result.lastID]);
@@ -763,7 +882,15 @@ app.get("/api/health", async (req, res) => {
 app.post("/api/auth/register", async (req, res) => {
   try {
     const name = String(req.body.name || "").trim();
+    const username = normalizeUsername(req.body.username);
     const email = normalizeEmail(req.body.email);
+    const phone = normalizePhone(req.body.phone);
+    const addressLine1 = normalizeAddress(req.body.addressLine1);
+    const city = normalizeAddress(req.body.city);
+    const province = normalizeAddress(req.body.province);
+    const postalCode = normalizeAddress(req.body.postalCode);
+    const country = normalizeCountry(req.body.country);
+    const paymentMethodPreference = normalizePaymentMethodPreference(req.body.paymentMethodPreference);
     const password = String(req.body.password || "");
     const selectedPlan = String(req.body.selectedPlan || "FREE").trim().toUpperCase() === "PRO" ? "PRO" : "FREE";
     const billingCycle = String(req.body.billingCycle || "MONTHLY").trim().toUpperCase() === "YEARLY" ? "YEARLY" : "MONTHLY";
@@ -780,11 +907,42 @@ app.post("/api/auth/register", async (req, res) => {
       res.status(400).json({ ok: false, message: "Le mot de passe doit contenir au moins 6 caracteres." });
       return;
     }
+    if (selectedPlan === "PRO" && username.length < 3) {
+      res.status(400).json({ ok: false, message: "Le nom d'utilisateur Pro doit contenir au moins 3 caracteres." });
+      return;
+    }
+    if (selectedPlan === "PRO" && !phone) {
+      res.status(400).json({ ok: false, message: "Le numero de telephone est requis pour l'abonnement Pro." });
+      return;
+    }
+    if (selectedPlan === "PRO" && !addressLine1) {
+      res.status(400).json({ ok: false, message: "L'adresse est requise pour l'abonnement Pro." });
+      return;
+    }
+    if (selectedPlan === "PRO" && !city) {
+      res.status(400).json({ ok: false, message: "La ville est requise pour l'abonnement Pro." });
+      return;
+    }
+    if (selectedPlan === "PRO" && !province) {
+      res.status(400).json({ ok: false, message: "La province ou l'etat est requis pour l'abonnement Pro." });
+      return;
+    }
+    if (selectedPlan === "PRO" && !postalCode) {
+      res.status(400).json({ ok: false, message: "Le code postal est requis pour l'abonnement Pro." });
+      return;
+    }
 
     const existingUser = await getQuery(`SELECT id FROM users WHERE email = ?`, [email]);
     if (existingUser) {
       res.status(409).json({ ok: false, message: "Ce courriel est deja utilise." });
       return;
+    }
+    if (username) {
+      const existingUsername = await getQuery(`SELECT id FROM users WHERE lower(username) = lower(?)`, [username]);
+      if (existingUsername) {
+        res.status(409).json({ ok: false, message: "Ce nom d'utilisateur est deja utilise." });
+        return;
+      }
     }
 
     const now = new Date().toISOString();
@@ -794,31 +952,77 @@ app.post("/api/auth/register", async (req, res) => {
 
     if (selectedPlan === "PRO" && stripeCheckoutConfigured()) {
       const stripe = getStripeClient();
-      const customer = await stripe.customers.create({
+      const customerData = {
         email,
         name,
-        metadata: { pendingEmail: email }
-      });
+        phone: phone || undefined,
+        address: {
+          line1: addressLine1 || undefined,
+          city: city || undefined,
+          state: province || undefined,
+          postal_code: postalCode || undefined,
+          country: country || undefined
+        },
+        metadata: {
+          pendingEmail: email,
+          username: username || "",
+          paymentMethodPreference
+        }
+      };
+      const customer = await stripe.customers.create(customerData);
       stripeCustomerId = customer.id;
 
       const priceId = billingCycle === "YEARLY" ? STRIPE_PRICE_YEARLY : STRIPE_PRICE_MONTHLY;
-      const session = await stripe.checkout.sessions.create({
+      const sessionConfig = {
         mode: "subscription",
         customer: stripeCustomerId,
         line_items: [{ price: priceId, quantity: 1 }],
         success_url: STRIPE_CHECKOUT_SUCCESS_URL,
         cancel_url: STRIPE_CHECKOUT_CANCEL_URL,
-        billing_address_collection: "auto",
+        billing_address_collection: "required",
         allow_promotion_codes: true,
+        customer_update: {
+          address: "auto",
+          name: "auto"
+        },
         metadata: { pendingEmail: email }
-      });
+      };
+
+      if (paymentMethodPreference === "PAYPAL") {
+        sessionConfig.payment_method_types = ["paypal", "card"];
+      } else {
+        sessionConfig.payment_method_types = ["card"];
+      }
+
+      let session;
+      try {
+        session = await stripe.checkout.sessions.create(sessionConfig);
+      } catch (stripeError) {
+        if (paymentMethodPreference === "PAYPAL") {
+          res.status(400).json({
+            ok: false,
+            code: "PAYPAL_NOT_AVAILABLE",
+            message: "PayPal n'est pas encore actif sur ce compte Stripe. Active PayPal recurrent dans Stripe ou choisis Visa / Mastercard."
+          });
+          return;
+        }
+        throw stripeError;
+      }
 
       checkoutUrl = session.url || null;
     }
 
     const pending = await createOrReplacePendingRegistration({
       name,
+      username: username || null,
       email,
+      phone,
+      addressLine1,
+      city,
+      province,
+      postalCode,
+      country,
+      paymentMethodPreference,
       passwordHash,
       selectedPlan,
       billingCycle,
@@ -826,20 +1030,25 @@ app.post("/api/auth/register", async (req, res) => {
       checkoutUrl
     });
 
-    const verification = await issueVerificationForPending(pending);
+    const verification = selectedPlan === "FREE"
+      ? await issueVerificationForPending(pending)
+      : { verifyUrl: null, emailResult: { sent: false, previewOnly: !canSendEmail() } };
 
     res.status(201).json({
       ok: true,
-      message: canSendEmail()
-        ? "Inscription recue. Confirme maintenant ton courriel pour activer le compte."
-        : "Inscription recue. Email non configure localement, utilise le lien de verification fourni.",
+      message: selectedPlan === "PRO"
+        ? "Renseignements recus. Passe maintenant au paiement. Le courriel de confirmation sera envoye apres validation du paiement."
+        : canSendEmail()
+          ? "Inscription recue. Confirme maintenant ton courriel pour activer le compte."
+          : "Inscription recue. Email non configure localement, utilise le lien de verification fourni.",
       selectedPlan,
       billingCycle: selectedPlan === "PRO" ? billingCycle : null,
       checkoutUrl,
       emailVerificationRequired: true,
-      emailPreviewMode: !canSendEmail(),
-      verifyUrl: !canSendEmail() ? verification.verifyUrl : null,
+      emailPreviewMode: selectedPlan === "FREE" ? !canSendEmail() : false,
+      verifyUrl: selectedPlan === "FREE" && !canSendEmail() ? verification.verifyUrl : null,
       pending: {
+        username,
         email,
         selectedPlan,
         billingCycle
@@ -866,6 +1075,19 @@ app.post("/api/auth/login", async (req, res) => {
     }
 
     const user = await getQuery(`SELECT * FROM users WHERE email = ?`, [email]);
+    if (!user) {
+      const pending = await getQuery(`SELECT * FROM pending_registrations WHERE email = ?`, [email]);
+      if (pending && await bcrypt.compare(password, pending.password_hash)) {
+        res.status(403).json({
+          ok: false,
+          code: "EMAIL_NOT_VERIFIED",
+          message: pending.selected_plan === "PRO"
+            ? "Ton abonnement Pro est en attente. Termine le paiement puis confirme ton courriel."
+            : "Ton inscription existe, mais ton courriel n'est pas encore confirme. Verifie ta boite courriel."
+        });
+        return;
+      }
+    }
     if (!user || !(await bcrypt.compare(password, user.password_hash))) {
       res.status(401).json({ ok: false, message: "Identifiants invalides." });
       return;
@@ -898,6 +1120,13 @@ app.post("/api/auth/resend-verification", async (req, res) => {
 
       const pending = await getQuery(`SELECT * FROM pending_registrations WHERE email = ?`, [email]);
       if (pending) {
+        if (pending.selected_plan === "PRO") {
+          res.status(400).json({
+            ok: false,
+            message: "Pour un abonnement Pro, le courriel de confirmation est envoye apres la validation du paiement."
+          });
+          return;
+        }
         const verification = await issueVerificationForPending(pending);
         res.json({
           ok: true,
@@ -946,6 +1175,13 @@ app.post("/api/auth/verify-email", async (req, res) => {
           res.status(400).json({ ok: false, message: "Ce lien de verification a expire." });
           return;
         }
+        if (pending.selected_plan === "PRO") {
+          res.status(400).json({
+            ok: false,
+            message: "Le compte Pro doit d'abord etre paye. Le courriel de confirmation est envoye apres validation du paiement."
+          });
+          return;
+        }
 
         const existingUser = await getQuery(`SELECT * FROM users WHERE email = ?`, [pending.email]);
         if (existingUser) {
@@ -956,8 +1192,30 @@ app.post("/api/auth/verify-email", async (req, res) => {
 
         const now = new Date().toISOString();
         const result = await runQuery(
-          `INSERT INTO users (name, email, password_hash, email_verified, plan, stripe_customer_id, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?, ?)`,
-          [pending.name, pending.email, pending.password_hash, pending.selected_plan || 'FREE', pending.stripe_customer_id, now, now]
+          `
+            INSERT INTO users (
+              name, username, email, phone, address_line1, city, province, postal_code, country, payment_method_preference,
+              password_hash, email_verified, plan, stripe_customer_id, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+          `,
+          [
+            pending.name,
+            pending.username,
+            pending.email,
+            pending.phone,
+            pending.address_line1,
+            pending.city,
+            pending.province,
+            pending.postal_code,
+            pending.country,
+            pending.payment_method_preference,
+            pending.password_hash,
+            pending.selected_plan || 'FREE',
+            pending.stripe_customer_id,
+            now,
+            now
+          ]
         );
 
         await runQuery(`DELETE FROM pending_registrations WHERE id = ?`, [pending.id]);
