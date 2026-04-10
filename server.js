@@ -809,7 +809,7 @@ app.post("/api/auth/register", async (req, res) => {
         success_url: STRIPE_CHECKOUT_SUCCESS_URL,
         cancel_url: STRIPE_CHECKOUT_CANCEL_URL,
         billing_address_collection: "auto",
-        allow_promotion_codes: false,
+        allow_promotion_codes: true,
         metadata: { pendingEmail: email }
       });
 
@@ -956,8 +956,8 @@ app.post("/api/auth/verify-email", async (req, res) => {
 
         const now = new Date().toISOString();
         const result = await runQuery(
-          `INSERT INTO users (name, email, password_hash, email_verified, plan, stripe_customer_id, created_at, updated_at) VALUES (?, ?, ?, 1, 'FREE', ?, ?, ?)`,
-          [pending.name, pending.email, pending.password_hash, pending.stripe_customer_id, now, now]
+          `INSERT INTO users (name, email, password_hash, email_verified, plan, stripe_customer_id, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?, ?)`,
+          [pending.name, pending.email, pending.password_hash, pending.selected_plan || 'FREE', pending.stripe_customer_id, now, now]
         );
 
         await runQuery(`DELETE FROM pending_registrations WHERE id = ?`, [pending.id]);
