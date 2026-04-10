@@ -73,6 +73,7 @@ Le systeme de verification email a ete ajoute avec :
 - lien de validation
 - blocage de connexion tant que l'email n'est pas confirme
 - renvoi du courriel de verification
+- inscription stockee en attente avant creation definitive du compte
 
 Integration mail :
 
@@ -175,8 +176,50 @@ Le frontend `public/index.html` a ete modifie pour afficher :
 - le bouton Pro annuel
 - le bouton de gestion d'abonnement
 - le retour apres paiement ou annulation
+- un choix `Gratuit` ou `Pro` avant la creation du compte
+- un choix `Mensuel 2,00 $` ou `Annuel 20,00 $` avant la creation du compte Pro
+- un avertissement legal visible sur la page publique
+- la mention des droits reserves en bas de page
 
-### 13. Blocage de fonctions reservees au Pro
+### 13. Refonte du tunnel public Pro
+
+Le parcours public a ensuite ete realigne sur une logique commerciale plus claire.
+
+Ordre retenu :
+
+1. choisir l'offre
+2. choisir mensuel ou annuel
+3. entrer ses informations
+4. payer
+5. activer le compte
+6. acceder a l'application
+
+Implementation actuelle :
+
+- `Gratuit` : inscription en attente avant activation
+- `Pro` : choix du cycle de facturation avant inscription
+- le backend cree d'abord une inscription en attente
+- si Stripe est configure, le backend genere une session Checkout Stripe
+- le frontend redirige ensuite directement vers Stripe
+
+### 14. Nouvelle logique d'inscription en attente
+
+Le parcours d'inscription a ete corrige pour eviter qu'un courriel soit considere "deja utilise" alors que le compte n'a jamais ete active.
+
+Nouvelle logique :
+
+1. l'utilisateur remplit le formulaire
+2. le serveur enregistre une ligne dans `pending_registrations`
+3. le courriel de confirmation est envoye
+4. le vrai compte n'entre dans `users` qu'apres clic sur le lien de confirmation
+5. une inscription non confirmee ne cree donc pas encore un compte actif
+
+Avantages :
+
+- plus de confusion sur les doublons
+- plus de faux "courriel deja utilise"
+- la base `users` contient uniquement les comptes actives
+### 15. Blocage de fonctions reservees au Pro
 
 Le backend bloque deja les actions de type `SCAN` si le compte n'est pas `PRO`.
 
@@ -186,29 +229,55 @@ Cela prepare la suite pour :
 - automatisation avancee
 - fonctions premium
 
+### 16. Panneau Pro glissant
+
+Un panneau slide-up a ete ajoute dans le frontend. Quand l'utilisateur clique sur "Mensuel 2,00 $" ou "Annuel 20,00 $", un panneau s'ouvre depuis le bas avec le formulaire d'inscription complet (nom, courriel, mot de passe). Apres soumission, redirection automatique vers Stripe Checkout.
+
+### 17. Correction email non-bloquant
+
+Le serveur ne retourne plus d'erreur 500 si l'envoi du courriel Resend echoue. L'echec est logge mais l'inscription continue.
+
+### 18. Page admin
+
+Une page admin complete a ete ajoutee a `/admin.html` :
+
+- protegee par mot de passe (`ADMIN_PASSWORD` dans Render)
+- MFA optionnel (`ADMIN_MFA_SECRET` dans Render)
+- liste tous les utilisateurs (gratuit + Pro)
+- donner / retirer le plan Pro sans Stripe (colonne `plan_gifted`)
+- creation de codes promo Stripe
+- envoi de courriels promotionnels aux utilisateurs selectionnes
+
+### 19. Corrections de bugs critiques
+
+- le plan Pro est maintenant correctement conserve lors de la verification du courriel (correction du hardcode `FREE`)
+- les codes promo Stripe sont actives au checkout (`allow_promotion_codes: true`)
+- un message d'erreur clair s'affiche si Stripe n'est pas configure au moment de l'inscription Pro
+
+### 20. Resend — probleme expediteur
+
+`RESEND_FROM_EMAIL` doit utiliser un domaine verifie dans Resend. L'adresse `onboarding@resend.dev` est utilisee en attendant la verification du domaine `vsstudiocreations.ca`. La verification DNS du domaine reste a faire via Planet Hoster (panneau N0C / mg.n0c.com).
+
 ## Etat actuel du projet
 
 Le projet est aujourd'hui :
 
-- deploye
+- deploye sur Render
 - accessible publiquement
-- capable de creer un compte
-- capable de verifier un courriel
-- capable de connecter un utilisateur
-- capable d'ajouter, modifier et supprimer des tickets
-- capable de gerer un debut de logique Free / Pro
-- pret a finaliser Stripe
+- inscription Free et Pro fonctionnelle
+- panneau Pro glissant avec formulaire integre
+- redirection vers Stripe Checkout au moment de l'inscription Pro
+- activation du compte Pro via webhook Stripe
+- page admin protegee par mot de passe
+- gestion des plans depuis l'admin (cadeau Pro sans Stripe)
+- codes promo Stripe creables depuis l'admin
+- envoi de courriels depuis l'admin
 
 ## Ce qui reste a faire
 
-Pour terminer completement l'offre payante, il reste a finaliser :
-
-- `STRIPE_SECRET_KEY` dans Render
-- `STRIPE_PRICE_MONTHLY` dans Render
-- `STRIPE_PRICE_YEARLY` dans Render
-- `STRIPE_WEBHOOK_SECRET` dans Render
-- webhook Stripe vers Render
-- tests de paiement reels en mode test
+- verifier le domaine `vsstudiocreations.ca` dans Resend via Planet Hoster (mg.n0c.com) pour que les courriels partent depuis `boutique@vsstudiocreations.ca`
+- tester le flux complet de paiement Pro en mode test Stripe
+- confirmer que `STRIPE_PRICE_MONTHLY` et `STRIPE_PRICE_YEARLY` sont bien configures dans Render
 
 ## Emplacement des fichiers importants
 

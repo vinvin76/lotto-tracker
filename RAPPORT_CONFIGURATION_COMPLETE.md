@@ -164,6 +164,7 @@ Le backend gere :
 - hash du mot de passe
 - JWT
 - verification email
+- inscription en attente avant activation du vrai compte
 - tickets
 - dashboard
 - plan Free / Pro
@@ -176,14 +177,39 @@ Le backend gere :
 - `users`
 - `tickets`
 - `email_verification_tokens`
+- `pending_registrations`
 - `subscriptions`
 - `payment_events`
+
+## 7b. Admin
+
+URL admin :
+
+`https://lotto-tracker-75xe.onrender.com/admin.html`
+
+Variables Render necessaires :
+
+```env
+ADMIN_PASSWORD=ton-mot-de-passe-admin
+ADMIN_MFA_SECRET=cle-base32-optionnelle
+```
+
+Fonctions disponibles :
+
+- liste des utilisateurs avec statut Free / Pro
+- donner ou retirer le plan Pro sans Stripe (plan cadeau)
+- creer des codes promo Stripe
+- envoyer des courriels promotionnels aux utilisateurs selectionnes
 
 ## 8. Configuration technique du frontend
 
 Le frontend gere :
 
-- inscription
+- choix public `Gratuit` ou `Pro`
+- choix public `Mensuel` ou `Annuel` pour `Pro`
+- panneau slide-up au clic sur un prix Pro (formulaire integre)
+- inscription Free et Pro depuis le panneau
+- redirection automatique vers Stripe apres inscription Pro
 - connexion
 - verification email via lien
 - affichage dashboard
@@ -192,8 +218,56 @@ Le frontend gere :
 - panneau abonnement
 - boutons Pro mensuel / Pro annuel
 - bouton de gestion d'abonnement
+- avertissement legal visible
+- mention de droits reserves dans le footer
 
-## 9. Configuration Stripe a terminer
+## 9. Tunnel public retenu
+
+Le tunnel souhaite pour la partie publique est :
+
+1. choisir l'offre
+2. choisir mensuel ou annuel
+3. entrer ses infos
+4. payer
+5. activer le compte
+6. acceder a l'application
+
+Implementation en cours dans le code :
+
+- si l'utilisateur choisit `Gratuit`
+  - creation d'une inscription en attente
+  - confirmation courriel
+  - creation du vrai compte apres validation
+  - connexion
+- si l'utilisateur choisit `Pro`
+  - choix `Mensuel 2,00 $` ou `Annuel 20,00 $`
+  - creation d'une inscription en attente
+  - creation d'une session Stripe Checkout
+  - redirection vers Stripe
+  - retour au site
+  - confirmation courriel
+  - creation du vrai compte apres validation
+  - connexion
+
+## 10. Logique d'activation du compte
+
+Le systeme a ete ajuste pour que l'adresse courriel ne soit pas ajoutee trop tot dans `users`.
+
+Logique retenue :
+
+1. l'utilisateur remplit le formulaire
+2. le serveur stocke l'inscription dans `pending_registrations`
+3. un token de confirmation est associe a cette inscription
+4. apres clic sur le lien, le serveur cree l'utilisateur dans `users`
+5. l'inscription temporaire est ensuite supprimee
+
+Ce choix evite :
+
+- les comptes incomplets
+- les faux doublons
+- le message "courriel deja utilise" alors qu'aucun compte actif n'existe encore
+
+## 11. Configuration Stripe a terminer
 
 ### Etape 1
 
@@ -257,7 +331,7 @@ Tester :
 - retour sur le site
 - verification du plan dans l'interface
 
-## 10. Configuration des tests Stripe
+## 12. Configuration des tests Stripe
 
 Pour tester en mode sandbox Stripe :
 
@@ -265,7 +339,7 @@ Pour tester en mode sandbox Stripe :
 - verifier que le webhook remonte
 - verifier que l'utilisateur passe en `PRO`
 
-## 11. Services utilises dans le projet
+## 13. Services utilises dans le projet
 
 ### Local
 
@@ -282,7 +356,7 @@ Pour tester en mode sandbox Stripe :
 - Resend
 - Stripe
 
-## 12. Etat d'avancement
+## 14. Etat d'avancement
 
 ### Fait
 
@@ -293,6 +367,10 @@ Pour tester en mode sandbox Stripe :
 - GitHub
 - debut complet Free / Pro
 - integration code Stripe
+- choix public Gratuit / Pro
+- choix public Mensuel / Annuel
+- debut du tunnel Pro avant connexion
+- inscription en attente avant creation du vrai compte
 
 ### En cours de finalisation
 
@@ -300,7 +378,7 @@ Pour tester en mode sandbox Stripe :
 - webhook Stripe
 - test de paiement complet
 
-## 13. Recommandations pour archive
+## 15. Recommandations pour archive
 
 Conserver ces informations :
 
@@ -319,6 +397,6 @@ Ne jamais archiver en clair :
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET`
 
-## 14. Resume final
+## 16. Resume final
 
 LottoTracker est maintenant une application publique deployee, avec compte utilisateur, verification email, gestion de tickets et base de logique SaaS Free / Pro. Le code Stripe est en place. La derniere phase consiste a finir la configuration Stripe cote dashboard et variables Render pour activer les paiements de test et ensuite la mise en production.
