@@ -950,6 +950,47 @@ app.post("/api/auth/register", async (req, res) => {
     let checkoutUrl = null;
     let stripeCustomerId = null;
 
+    if (selectedPlan === "FREE") {
+      const result = await runQuery(
+        `
+          INSERT INTO users (
+            name, username, email, phone, address_line1, city, province, postal_code, country, payment_method_preference,
+            password_hash, email_verified, plan, stripe_customer_id, created_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'FREE', NULL, ?, ?)
+        `,
+        [
+          name,
+          username || null,
+          email,
+          phone,
+          addressLine1,
+          city,
+          province,
+          postalCode,
+          country,
+          paymentMethodPreference,
+          passwordHash,
+          now,
+          now
+        ]
+      );
+
+      const newUser = await getQuery(`SELECT * FROM users WHERE id = ?`, [result.lastID]);
+      res.status(201).json({
+        ok: true,
+        message: "Compte gratuit cree avec succes. Tu peux te connecter maintenant.",
+        selectedPlan: "FREE",
+        billingCycle: null,
+        checkoutUrl: null,
+        emailVerificationRequired: false,
+        emailPreviewMode: false,
+        verifyUrl: null,
+        user: sanitizeUser(newUser)
+      });
+      return;
+    }
+
     if (selectedPlan === "PRO" && stripeCheckoutConfigured()) {
       const stripe = getStripeClient();
       const customerData = {
