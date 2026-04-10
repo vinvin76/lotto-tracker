@@ -932,10 +932,16 @@ app.post("/api/auth/register", async (req, res) => {
       return;
     }
 
-    const existingUser = await getQuery(`SELECT id FROM users WHERE email = ?`, [email]);
+    const existingUser = await getQuery(`SELECT * FROM users WHERE email = ?`, [email]);
     if (existingUser) {
-      res.status(409).json({ ok: false, message: "Ce courriel est deja utilise." });
-      return;
+      // Let the user reuse the same email when an old FREE account was never confirmed.
+      if (!existingUser.email_verified && existingUser.plan !== "PRO") {
+        await runQuery(`DELETE FROM email_verification_tokens WHERE user_id = ?`, [existingUser.id]);
+        await runQuery(`DELETE FROM users WHERE id = ?`, [existingUser.id]);
+      } else {
+        res.status(409).json({ ok: false, message: "Ce courriel est deja utilise." });
+        return;
+      }
     }
     if (username) {
       const existingUsername = await getQuery(`SELECT id FROM users WHERE lower(username) = lower(?)`, [username]);
